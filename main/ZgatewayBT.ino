@@ -467,7 +467,7 @@ void procBLETask(void* pvParameters) {
           //************* Begin Added By Me!!! *************
       /*  adv_code = BLEUtils::buildHexData(NULL, (uint8_t*)(advertisedDevice->getManufacturerData().data() + (advertisedDevice->getManufacturerData().length() - 1)), 1);
           if (!(strcmp(adv_code, "01"))) {
-            temperature1 = BLEUtils::buildHexData(NULL, (uint8_t*)(advertisedDevice->getManufacturerData().data() + 1), 2);
+            temperature1 = BLEUtils::buildHexData(NULL, (uint8_t*)(advertisedDevice->getManufacturerData().data() + 3), 2);
             T_Out = (int16_t)strtol(temperature1, NULL, 16);
             Temperature = (float)T_Out/10.0;
             sprintf(temperature1, "%.1f", Temperature);

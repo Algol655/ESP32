@@ -59,7 +59,7 @@ bool bleConnect = AttemptBLECOnnect;
 
 #ifndef Scan_duration
 //#  define Scan_duration 10000 //define the time for a scan
-#  define Scan_duration 1100 //define the time for a scan
+#  define Scan_duration 1000 //define the time for a scan
 #endif
 #ifndef BLEScanInterval
 //#  define BLEScanInterval 52 // How often the scan occurs / switches channels; in milliseconds,

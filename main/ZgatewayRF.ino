@@ -89,7 +89,7 @@ void RFtoMQTTdiscovery(SIGNAL_SIZE_UL_ULL MQTTvalue) {
   Log.trace(F("RF Entity Discovered, create HA Discovery CFG" CR));
   char* switchRF[2] = {val, "RF"};
   Log.trace(F("CreateDiscoverySwitch: %s" CR), switchRF[1]);
-#    ifdef valueAsASubject
+#    if valueAsATopic
   String discovery_topic = String(subjectRFtoMQTT) + "/" + String(switchRF[0]);
 #    else
   String discovery_topic = String(subjectRFtoMQTT);
@@ -111,6 +111,12 @@ void setupRF() {
   Log.notice(F("RF_EMITTER_GPIO: %d " CR), RF_EMITTER_GPIO);
   Log.notice(F("RF_RECEIVER_GPIO: %d " CR), RF_RECEIVER_GPIO);
 #  ifdef ZradioCC1101 //receiving with CC1101
+  if (ELECHOUSE_cc1101.getCC1101()) {
+    Log.notice(F("C1101 spi Connection OK" CR));
+  } else {
+    Log.error(F("C1101 spi Connection Error" CR));
+  }
+
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.SetRx(receiveMhz);
 #  endif
@@ -176,7 +182,9 @@ void RFtoMQTT() {
 #  if simpleReceiving
 void MQTTtoRF(char* topicOri, char* datacallback) {
 #    ifdef ZradioCC1101 // set Receive off and Transmitt on
+  disableActiveReceiver();
   ELECHOUSE_cc1101.SetTx(receiveMhz);
+  disableActiveReceiver();
 #    endif
   mySwitch.disableReceive();
   mySwitch.enableTransmit(RF_EMITTER_GPIO);
@@ -249,8 +257,16 @@ void MQTTtoRF(char* topicOri, JsonObject& RFdata) { // json object decoding
       Log.notice(F("RF Pulse Lgth: %d" CR), valuePLSL);
       Log.notice(F("Bits nb: %d" CR), valueBITS);
 #    ifdef ZradioCC1101 // set Receive off and Transmitt on
+      int txPower = RFdata["txpower"] | RF_CC1101_TXPOWER;
+      ELECHOUSE_cc1101.setPA((int)txPower);
+      Log.notice(F("CC1101 TX Power: %d" CR), txPower);
+
       float trMhz = RFdata["mhz"] | CC1101_FREQUENCY;
       if (validFrequency((int)trMhz)) {
+      int txPower = RFdata["txpower"] | RF_CC1101_TXPOWER;
+      ELECHOUSE_cc1101.setPA((int)txPower);
+      Log.notice(F("CC1101 TX Power: %d" CR), txPower);
+
         ELECHOUSE_cc1101.SetTx(trMhz);
         Log.notice(F("Transmit mhz: %F" CR), trMhz);
       }
@@ -321,6 +337,7 @@ void enableRFReceive() {
 #  endif
 
 #  ifdef ZradioCC1101 // set Receive on and Transmitt off
+  ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.SetRx(receiveMhz);
 #  endif
   mySwitch.disableTransmit();

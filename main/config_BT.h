@@ -56,7 +56,8 @@ extern int btQueueLengthCount;
 #endif
 
 #ifndef AttemptBLEConnect
-#  define AttemptBLEConnect true //do we by default attempt a BLE connection to sensors with ESP32
+//#  define AttemptBLEConnect true //do we by default attempt a BLE connection to sensors with ESP32
+#  define AttemptBLEConnect false //do we by default attempt a BLE connection to sensors with ESP32
 #endif
 
 #ifndef BLE_FILTER_CONNECTABLE

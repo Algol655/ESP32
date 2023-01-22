@@ -48,6 +48,7 @@ extern void MQTTtoONOFF(char* topicOri, JsonObject& RFdata);
 #endif
 #ifndef MAX_TEMP_ACTUATOR
 //#  define MAX_TEMP_ACTUATOR         70 // Temperature that will trigger the relay to go OFF
+#  define MAX_TEMP_ACTUATOR         65 // Temperature that will trigger the relay to go OFF
 #endif
 #ifndef TimeBetweenReadingIntTemp
 #  define TimeBetweenReadingIntTemp 5000 // Time interval between internal temp measurement to switch off the relay if MAX_TEMP_ACTUATOR is reached
@@ -58,7 +59,8 @@ extern void MQTTtoONOFF(char* topicOri, JsonObject& RFdata);
 #  ifdef ESP8266
 #    define ACTUATOR_ONOFF_GPIO 15 //12 for sonoff basic relay
 #  elif ESP32
-#    define ACTUATOR_ONOFF_GPIO 15
+//#    define ACTUATOR_ONOFF_GPIO 15
+#    define ACTUATOR_ONOFF_GPIO 4
 #  else
 #    define ACTUATOR_ONOFF_GPIO 13
 #  endif

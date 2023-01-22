@@ -111,10 +111,21 @@ void OverHeatingRelayOFF() {
   if (millis() > (timeinttemp + TimeBetweenReadingIntTemp)) {
     float internalTempc = intTemperatureRead();
     Log.trace(F("Internal temperature of the ESP32 %F" CR), internalTempc);
-    if (internalTempc > MAX_TEMP_ACTUATOR && digitalRead(ACTUATOR_ONOFF_GPIO) == ACTUATOR_ON) {
+    /****** Begin Mofified By Me ******/ 
+/*  if (internalTempc > MAX_TEMP_ACTUATOR && digitalRead(ACTUATOR_ONOFF_GPIO) == ACTUATOR_ON) {
       Log.error(F("[ActuatorONOFF] OverTemperature detected ( %F > %F ) switching OFF Actuator" CR), internalTempc, MAX_TEMP_ACTUATOR);
       ActuatorManualTrigger(!ACTUATOR_ON);
+    } */
+    /****** End Modified By Me ******/ 
+    /****** Begin Added By Me ******/ 
+    if (internalTempc > MAX_TEMP_ACTUATOR) {
+      Log.error(F("[ActuatorONOFF] OverTemperature detected ( %F > %F ) switching OFF Actuator" CR), internalTempc, MAX_TEMP_ACTUATOR);
+      ActuatorManualTrigger(!ACTUATOR_ON);
+    } else  {
+      Log.error(F("[ActuatorONOFF] NormaTemperature detected ( %F > %F ) switching ON Actuator" CR), internalTempc, MAX_TEMP_ACTUATOR);
+      ActuatorManualTrigger(ACTUATOR_ON);
     }
+    /****** End Added By Me ******/ 
     timeinttemp = millis();
   }
 #    endif
@@ -130,7 +141,9 @@ void ActuatorManualTrigger(uint8_t level) {
     level = !digitalRead(ACTUATOR_ONOFF_GPIO);
   }
 #  else
-  level = !digitalRead(ACTUATOR_ONOFF_GPIO);
+/****** Begin Mofified By Me ******/ 
+//level = !digitalRead(ACTUATOR_ONOFF_GPIO);
+/****** End Mofified By Me ******/ 
 #  endif
   Log.trace(F("Actuator triggered %d" CR), level);
   digitalWrite(ACTUATOR_ONOFF_GPIO, level);

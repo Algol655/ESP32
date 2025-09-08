@@ -1,4 +1,4 @@
- # Parts
+# Parts
 Depending on the gateway you would like to setup and your board, you may need extra parts/module to add.
 
 You can take a look to the [OpenMQTTGateway compatible website](https://compatible.openmqttgateway.com) to have a view of the [supported parts](https://compatible.openmqttgateway.com/index.php/parts/).
@@ -6,12 +6,12 @@ You can take a look to the [OpenMQTTGateway compatible website](https://compatib
 Here is below the main parts reference.
 
 ## Main parts 
-|Parts|RF|IR|BLE|LORA|GSM|
+|Parts|RF|IR|BLE|LoRa|GSM|
 |-|:-:|:-:|:-:|:-:|:-:|
 |SRX882 / STX882|X|-||-|-|
 |CC1101|X|-|-|-|-|
 |38KHz IR emitter and receiver|-|X|-|-|-|
-|SX1276|-|-|-|X|-|
+|SX1276 / SX1278|-|-|-|X|-|
 |A6/A7|-|-|-|-|X|
 
 ::: tip

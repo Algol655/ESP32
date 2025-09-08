@@ -6,6 +6,7 @@ agree to follow the code of conduct below
 [code of conduct](https://github.com/1technophile/OpenMQTTGateway/blob/master/CODE_OF_CONDUCT.md)
 
 [code style guide](https://google.github.io/styleguide/cppguide.html#Formatting)
+
 So as to format automatically your document you have to add the "clang-Format" extension to VSCode, once done, you can format the code by doing a right click into the code file window and clicking "Format document".
 
 Fork the [development branch](https://github.com/1technophile/OpenMQTTGateway/tree/development), then clone the repo
@@ -15,7 +16,7 @@ Make your modification,
 * If you want to add a new sensor, name it `ZsensorYYY`, `YYY` replaced by your sensor type, can be more than three letters
 * If you want to add a new actuator, name it `ZactuatorZZZ`, `ZZZ` replaced by your actuator type, can be more than three letters
 
-Review your code, compile it for Arduino Uno, ESP32 and ESP8266
+Review your code, compile it for ESP32 and ESP8266
 
 Test it locally on your hardware config
 
@@ -33,6 +34,11 @@ Some things that will increase the chance that your pull request is accepted:
 * Write a [good commit message][commit].
 
 [commit]: http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html
+
+## Nightly builds
+
+Nightly builds can be found [here](https://docs.openmqttgateway.com/dev/upload/web-install.html) for testing purposes only.
+They are generated from the development branch nightly or from a particular pull request upon request.
 
 ## Developer Certificate Of Origin
 
@@ -67,3 +73,5 @@ This Developer Certificate Of Origin (DCO) was adopted on June 7, 2021.
 The text of this license is available under the [Creative Commons Attribution-ShareAlike 3.0 Unported License](http://creativecommons.org/licenses/by-sa/3.0/).  It is based on the Linux [Developer Certificate Of Origin](http://elinux.org/Developer_Certificate_Of_Origin).
 
 To accept the DCO it is required to put a x between [ ] on `[ ] I accept the DCO` in the PR template when submitting it. The [ ] is an opt-in box, so you have to manually accept it.
+
+

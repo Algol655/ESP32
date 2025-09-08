@@ -1,15 +1,15 @@
-/*  
-  OpenMQTTGateway  - ESP8266 or Arduino program for home automation 
+/*
+  Theengs OpenMQTTGateway - We Unite Sensors in One Open-Source Interface
 
-   Act as a wifi or ethernet gateway between your 433mhz/infrared IR signal  and a MQTT broker 
+   Act as a gateway between your 433mhz, infrared IR, BLE, LoRa signal and one interface like an MQTT broker
    Send and receiving command by MQTT
- 
+
    This files enables to set your parameter for the bluetooth low energy gateway (beacons detection)
-  
+
     Copyright: (c)Florian ROBERT
-  
+
     This file is part of OpenMQTTGateway.
-    
+
     OpenMQTTGateway is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -26,22 +26,23 @@
 #ifndef config_BT_h
 #define config_BT_h
 
+#include "TheengsCommon.h"
+
 extern void setupBT();
-extern bool BTtoMQTT();
-extern void MQTTtoBT(char* topicOri, JsonObject& RFdata);
-extern void emptyBTQueue();
+extern void XtoBT(const char* topicOri, JsonObject& RFdata);
 extern void launchBTDiscovery(bool overrideDiscovery);
+extern void stopProcessing(bool deinit);
+extern String stateBTMeasures(bool);
 
 #ifdef ESP32
-extern int btQueueBlocked;
-extern int btQueueLengthSum;
-extern int btQueueLengthCount;
 #  include "NimBLEDevice.h"
 #endif
 
 /*-----------BT TOPICS & COMPILATION PARAMETERS-----------*/
 #define subjectBTtoMQTT    "/BTtoMQTT"
 #define subjectMQTTtoBTset "/commands/MQTTtoBT/config"
+#define subjectMQTTtoBT    "/commands/MQTTtoBT"
+#define subjectTrackerSync "internal/trackersync"
 // Uncomment to send undecoded device data to another gateway device for decoding
 // #define MQTTDecodeTopic    "undecoded"
 #ifndef UseExtDecoder
@@ -64,12 +65,17 @@ extern int btQueueLengthCount;
 #  define BLE_FILTER_CONNECTABLE 0 // Sets whether to filter publishing of scanned devices that require a connection.
 #endif // Setting this to 1 prevents overwriting the publication of the device connection data with the advertised data (Recommended for use with OpenHAB).
 
-//#define MinimumRSSI -100 //default minimum rssi value, all the devices below -100 will not be reported
-#define MinimumRSSI -90 //default minimum rssi value, all the devices below -90 will not be reported
+#ifndef MinimumRSSI
+//#  define MinimumRSSI -100 //default minimum rssi value, all the devices below -100 will not be reported
+#  define MinimumRSSI -90 //default minimum rssi value, all the devices below -100 will not be reported
+#endif
 
 #ifndef Scan_duration
 //#  define Scan_duration 10000 //define the time for a scan
-#  define Scan_duration 1000 //define the time for a scan
+#  define Scan_duration 1100 //define the time for a scan
+#endif
+#ifndef MinScanDuration
+#  define MinScanDuration 1000 //minimum duration for a scan; in milliseconds
 #endif
 #ifndef BLEScanInterval
 //#  define BLEScanInterval 52 // How often the scan occurs / switches channels; in milliseconds,
@@ -77,76 +83,83 @@ extern int btQueueLengthCount;
 #endif
 #ifndef BLEScanWindow
 //#  define BLEScanWindow 30 // How long to scan during the interval; in milliseconds.
-#  define BLEScanWindow 50 // How long to scan during the interval; in milliseconds.
+#  define BLEScanWindow 51 // How long to scan during the interval; in milliseconds.
 #endif
-#ifndef ActiveBLEScan
-//#  define ActiveBLEScan true // Set active scanning, this will get more data from the advertiser.
-#  define ActiveBLEScan false // Set active scanning, this will get more data from the advertiser.
+#ifndef AdaptiveBLEScan
+//#  define AdaptiveBLEScan true // Set active scanning, this will get more data from the advertiser.
+#  define AdaptiveBLEScan false // Set active scanning, this will get more data from the advertiser.
 #endif
-#ifndef ScanBeforeConnect
-//#  define ScanBeforeConnect 10 //define number of scans before connecting to BLE devices (ESP32 only, minimum 1)
-#  define ScanBeforeConnect 1 //define number of scans before connecting to BLE devices (ESP32 only, minimum 1)
+#ifndef TimeBtwActive
+//#  define TimeBtwActive 55555 //define default time between two BLE active scans when general passive scanning is selected; in milliseconds
+#  define TimeBtwActive 10 //define default time between two BLE active scans when general passive scanning is selected; in milliseconds
 #endif
+#ifndef MinTimeBtwScan
+//#  define MinTimeBtwScan 100 //define the time between two scans; in milliseconds
+#  define MinTimeBtwScan 10 //define the time between two scans; in milliseconds
+#endif
+#ifndef TimeBtwConnect
+#  define TimeBtwConnect 3600000 //define default time between BLE connection attempt (not used for immediate actions); in milliseconds
+#endif
+#ifndef PresenceAwayTimer
+#  define PresenceAwayTimer 120000 //define the time between Offline Status update for the tracker sensors
+#endif
+#ifndef MovingTimer
+#  define MovingTimer 60000 //define the time between Offline Status update for the moving sensors with an accelerometer
+#endif
+
 #ifndef BLEScanDuplicateCacheSize
 #  define BLEScanDuplicateCacheSize 200
 #endif
 #ifndef TimeBtwRead
 //#  define TimeBtwRead 55555 //define default time between 2 scans
-#  define TimeBtwRead 1 //define default time between 2 scans
+#  define TimeBtwRead 10 //define default time between 2 scans
 #endif
+
 #ifndef PublishOnlySensors
 #  define PublishOnlySensors false //false if we publish all BLE devices discovered or true only the identified sensors (like temperature sensors)
 #endif
+
+#ifndef PublishRandomMACs
+#  define PublishRandomMACs false //false to not publish devices which randomly change their MAC addresses
+#endif
+
 #ifndef HassPresence
-//#  define HassPresence false //false if we publish into Home Assistant presence topic
-#  define HassPresence true //false if we publish into Home Assistant presence topic
+#  define HassPresence false //false if we publish into Home Assistant presence topic
+//#  define HassPresence true //false if we publish into Home Assistant presence topic
 #endif
 
-#ifndef BTQueueSize
-#  define BTQueueSize 4 // lockless queue size for multi core cases (ESP32 currently)
+#ifndef EnableBT
+#  define EnableBT true
 #endif
 
-#define HMSerialSpeed 9600 // Communication speed with the HM module, softwareserial doesn't support 115200
-//#define HM_BLUE_LED_STOP true //uncomment to stop the blue led light of HM1X
-
-#define BLEdelimiter       "4f4b2b444953413a" // OK+DISA:
-#define BLEEndOfDiscovery  "4f4b2b4449534345" // OK+DISCE
-#define BLEdelimiterLength 16
-#define CRLR               "0d0a"
-#define CRLR_Length        4
-#define BLE_CNCT_TIMEOUT   3000
-
-#define ServicedataMinLength 27
-
-unsigned int BLEinterval = TimeBtwRead; //time between 2 scans
-unsigned int BLEscanBeforeConnect = ScanBeforeConnect; //Number of BLE scans between connection cycles
-unsigned long scanCount = 0;
-bool publishOnlySensors = PublishOnlySensors;
-bool hassPresence = HassPresence;
-
-#ifndef pubKnownBLEServiceData
-#  define pubKnownBLEServiceData false // define true if you want to publish service data belonging to recognised sensors
+#ifndef BLEDecoder
+#  define BLEDecoder true //true if we use the Theengs decoder
 #endif
 
-#ifndef pubUnknownBLEServiceData
-//#  define pubUnknownBLEServiceData true // define false if you don't want to publish service data to unrecognised sensors (in case you are having too heavy service data) https://github.com/1technophile/OpenMQTTGateway/issues/318#issuecomment-446064707
-#  define pubUnknownBLEServiceData false // define false if you don't want to publish service data to unrecognised sensors (in case you are having too heavy service data) https://github.com/1technophile/OpenMQTTGateway/issues/318#issuecomment-446064707
+#if !BLEDecoder
+#  define UNKWNON_MODEL -1
+#else
+#  define UNKWNON_MODEL TheengsDecoder::BLE_ID_NUM::UNKNOWN_MODEL
 #endif
 
-#ifndef pubBLEManufacturerData
-#  define pubBLEManufacturerData false // define true if you want to publish the manufacturer's data (sometimes contains characters that aren't valid with receiving client)
+#ifndef BLE_CNCT_TIMEOUT
+#  define BLE_CNCT_TIMEOUT 3000
 #endif
 
-#ifndef pubUnknownBLEManufacturerData
-#  define pubUnknownBLEManufacturerData true // define true if you want to publish the manufacturer's data (sometimes contains characters that aren't valid with receiving client)
-#endif
+extern unsigned long scanCount;
 
-#ifndef pubBLEServiceUUID
-#  define pubBLEServiceUUID false // define true if you want to publish the service UUID data
+#ifndef pubBLEAdvData
+#  define pubBLEAdvData false // define true if you want to publish all advertisement data
+//#  define pubBLEAdvData true // define true if you want to publish all advertisement data
 #endif
 
 #ifndef useBeaconUuidForTopic
 #  define useBeaconUuidForTopic false // define true to use iBeacon UUID as topic, instead of sender (random) MAC address
+#endif
+
+#ifndef enableMultiGTWSync
+#  define enableMultiGTWSync true // //define true to use tracker and closest control devices sync across OpenMQTTGateway and Theengs Gateway gateways
+//#  define enableMultiGTWSync false // //define true to use tracker and closest control devices sync across OpenMQTTGateway and Theengs Gateway gateways
 #endif
 
 /*--------------HOME ASSISTANT ROOM PRESENCE--------------*/
@@ -159,10 +172,13 @@ bool hassPresence = HassPresence;
 /*----------------CONFIGURABLE PARAMETERS-----------------*/
 struct BTConfig_s {
   bool bleConnect; // Attempt a BLE connection to sensors with ESP32
-  bool activeScan;
-  unsigned int BLEinterval; // Time between 2 scans
-  unsigned int BLEscanBeforeConnect; // Number of BLE scans between connection cycles
+  bool adaptiveScan;
+  unsigned long intervalActiveScan; // Time between 2 active scans when generally passive scanning
+  unsigned long BLEinterval; // Time between 2 scans
+  unsigned long intervalConnect; // Time between 2 connects
+  unsigned long scanDuration; // Duration for a scan; in milliseconds
   bool pubOnlySensors; // Publish only the identified sensors (like temperature sensors)
+  bool pubRandomMACs; // Publish devices which randomly change their MAC address
   bool presenceEnable; // Publish into Home Assistant presence topic
   String presenceTopic; // Home Assistant presence topic to publish on
   bool presenceUseBeaconUuid; // Use iBeacon UUID as for presence, instead of sender MAC (random) address
@@ -170,13 +186,13 @@ struct BTConfig_s {
   bool extDecoderEnable; // Send undecoded device data to another gateway device for decoding
   String extDecoderTopic; // Topic to send undecoded device data on
   bool filterConnectable; // Sets whether to filter publishing of scanned devices that require a connection.
-  bool pubKnownServiceData; // Publish service data belonging to recognised sensors
-  bool pubUnknownServiceData; // Publish service data belonging to unrecognised sensors (in case you are having too heavy service data) https://github.com/1technophile/OpenMQTTGateway/issues/318#issuecomment-446064707
-  bool pubKnownManufData; // Publish the manufacturer's data (sometimes contains characters that aren't valid with receiving client)
-  bool pubUnknownManufData; // Publish the manufacturer's data (sometimes contains characters that aren't valid with receiving client)
-  bool pubServiceDataUUID; // Publish the service UUID data
+  bool pubAdvData; // Publish advertisement data
   bool pubBeaconUuidForTopic; // Use iBeacon UUID as topic, instead of sender (random) MAC address
   bool ignoreWBlist; // Disable Whitelist & Blacklist
+  unsigned long presenceAwayTimer; //Timer that trigger a tracker/PIR state as offline/off if not seen
+  unsigned long movingTimer; //Timer that trigger a moving sensor state as offline if not seen
+  bool forcePassiveScan; //Force passive scan
+  bool enabled; // Enable or disable the BT gateway
 };
 
 // Global struct to store live BT configuration data
@@ -206,9 +222,8 @@ enum ble_val_type {
 };
 
 struct BLEAction {
-  std::string value;
-  char addr[18];
-  int addr_type;
+  NimBLEAttValue value;
+  NimBLEAddress addr;
   NimBLEUUID service;
   NimBLEUUID characteristic;
   bool write;
@@ -220,12 +235,14 @@ struct BLEAction {
 
 struct BLEdevice {
   char macAdr[18];
+  char name[20];
   int macType;
   bool isDisc;
   bool isWhtL;
   bool isBlkL;
   bool connect;
   int sensorModel_id;
+  unsigned long lastUpdate;
 };
 
 class BLEconectable {
@@ -239,7 +256,5 @@ public:
     MAX,
   };
 };
-
-JsonObject& getBTJsonObject(const char* json = NULL, bool haPresenceEnabled = true);
 
 #endif

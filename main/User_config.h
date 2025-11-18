@@ -120,7 +120,8 @@
 #  define WifiManager_ssid Gateway_Name //this is the network name of the initial setup access point
 #endif
 #ifndef WifiManager_ConfigPortalTimeOut
-#  define WifiManager_ConfigPortalTimeOut 240 //time in seconds for the setup portal to stay open, default 240s
+//#  define WifiManager_ConfigPortalTimeOut 240 //time in seconds for the setup portal to stay open, default 240s
+#  define WifiManager_ConfigPortalTimeOut 10 //time in seconds for the setup portal to stay open, default 240s
 #endif
 #ifndef WiFi_TimeOut
 #  define WiFi_TimeOut 30

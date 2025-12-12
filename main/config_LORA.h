@@ -40,7 +40,8 @@ extern void XtoLORA(const char* topicOri, JsonObject& RFdata);
 
 //Default parameters used when the parameters are not set in the json data
 #ifndef LORA_BAND
-#  define LORA_BAND 868E6
+//#  define LORA_BAND 868E6
+#  define LORA_BAND 433E6
 #endif
 #ifndef LORA_SIGNAL_BANDWIDTH
 #  define LORA_SIGNAL_BANDWIDTH 125E3
@@ -49,16 +50,19 @@ extern void XtoLORA(const char* topicOri, JsonObject& RFdata);
 #  define LORA_TX_POWER 14
 #endif
 #ifndef LORA_SPREADING_FACTOR
-#  define LORA_SPREADING_FACTOR 7
+//#  define LORA_SPREADING_FACTOR 7
+#  define LORA_SPREADING_FACTOR 8
 #endif
 #ifndef LORA_CODING_RATE
-#  define LORA_CODING_RATE 5
+//#  define LORA_CODING_RATE 5
+#  define LORA_CODING_RATE 6
 #endif
 #ifndef LORA_PREAMBLE_LENGTH
 #  define LORA_PREAMBLE_LENGTH 8
 #endif
 #ifndef LORA_SYNC_WORD
-#  define LORA_SYNC_WORD 0x12
+//#  define LORA_SYNC_WORD 0x12
+#  define LORA_SYNC_WORD 0x34
 #endif
 #ifndef DEFAULT_CRC
 #  define DEFAULT_CRC true
@@ -71,6 +75,14 @@ extern void XtoLORA(const char* topicOri, JsonObject& RFdata);
 #endif
 
 #define repeatLORAwMQTT false // do we repeat a received signal by using MQTT with LORA gateway
+
+//*** Begin Added By Me!!! ***/
+#ifndef HassPresence
+#  define HassPresence false //false if we publish into Home Assistant presence topic
+//#  define HassPresence true //false if we publish into Home Assistant presence topic
+#endif
+//*** End Added By Me!!! ***/
+
 
 /*-------------------PIN DEFINITIONS----------------------*/
 

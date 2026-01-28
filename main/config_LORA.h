@@ -85,31 +85,59 @@ extern void XtoLORA(const char* topicOri, JsonObject& RFdata);
 
 
 /*-------------------PIN DEFINITIONS----------------------*/
+#if (TTGO_LORA_BOARD)
+  //TTGO LORA BOARD ESP32 PIN DEFINITION
 
-//TTGO LORA BOARD ESP32 PIN DEFINITION
+  #ifndef LORA_SCK
+  #  define LORA_SCK 5 // GPIO5  -- ttgo-lora32-v21 SX1278's SCK
+  #endif
 
-#ifndef LORA_SCK
-#  define LORA_SCK 5 // GPIO5  -- SX1278's SCK
-#endif
+  #ifndef LORA_MISO
+  #  define LORA_MISO 19 // GPIO19 -- ttgo-lora32-v21 SX1278's MISO
+  #endif
 
-#ifndef LORA_MISO
-#  define LORA_MISO 19 // GPIO19 -- SX1278's MISO
-#endif
+  #ifndef LORA_MOSI
+  #  define LORA_MOSI 27 // GPIO27 -- ttgo-lora32-v21 SX1278's MOSI
+  #endif
 
-#ifndef LORA_MOSI
-#  define LORA_MOSI 27 // GPIO27 -- SX1278's MOSI
-#endif
+  #ifndef LORA_SS
+  #  define LORA_SS 18 // GPIO18 -- ttgo-lora32-v21 SX1278's CS
+  #endif
 
-#ifndef LORA_SS
-#  define LORA_SS 18 // GPIO18 -- SX1278's CS
-#endif
+  #ifndef LORA_RST
+  #  define LORA_RST 14 // GPIO14 -- ttgo-lora32-v21 SX1278's RESET
+  #endif
 
-#ifndef LORA_RST
-#  define LORA_RST 14 // GPIO14 -- SX1278's RESET
-#endif
+  #ifndef LORA_DI0
+  #  define LORA_DI0 26 // GPIO26 -- ttgo-lora32-v21 SX1278's IRQ(Interrupt Request)
+  #endif
 
-#ifndef LORA_DI0
-#  define LORA_DI0 26 // GPIO26 -- SX1278's IRQ(Interrupt Request)
+#elif (ESP32_WT32_ETH01_BOARD)
+  //ESP32_WT32_ETH01 BOARD ESP32 PIN DEFINITION
+
+  #ifndef LORA_SCK
+  #  define LORA_SCK 14 // GPIO14  -- esp32-wt32-eth01 SX1278's SCK
+  #endif
+
+  #ifndef LORA_MISO
+  #  define LORA_MISO 15 // GPIO15 -- esp32-wt32-eth01 SX1278's MISO
+  #endif
+
+  #ifndef LORA_MOSI
+  #  define LORA_MOSI 12 // GPIO12 -- esp32-wt32-eth01 SX1278's MOSI
+  #endif
+
+  #ifndef LORA_SS
+  #  define LORA_SS 4 // GPIO4 -- esp32-wt32-eth01 SX1278's CS
+  #endif
+
+  #ifndef LORA_RST
+  #  define LORA_RST 2 // GPIO2 -- esp32-wt32-eth01 SX1278's RESET
+  #endif
+
+  #ifndef LORA_DI0
+  #  define LORA_DI0 35 // GPIO35 -- esp32-wt32-eth01 SX1278's IRQ(Interrupt Request)
+  #endif
 #endif
 
 struct LORAConfig_s {

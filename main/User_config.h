@@ -32,6 +32,22 @@
 #  define OMG_VERSION "version_tag"
 #endif
 
+//Begin Added By Me!!
+/*---------------------------------------------------*/
+/*               DEFINE THE BOARD USED               */
+/*---------------------------------------------------*/
+//The next #define include the following boards:
+// esp32-wt32-eth01-ble-eth
+// esp32-wt32-eth01-LoRa-eth
+#define ESP32_WT32_ETH01_BOARD  (1)
+#define TTGO_LORA_BOARD         (0)
+//The next #define include the following boards:
+// esp32-olimex-gtw-ble-eth
+// esp32-olimex-gtw-ble-poe
+// esp32-olimex-gtw-ble-poe-iso
+#define ESP32_OLIMEX_GTW        (0)
+//End Added By Me!!
+
 /*-------------CONFIGURE WIFIMANAGER-------------(only ESP8266 & SONOFF RFBridge)*/
 /*
  * The following parameters are set during the WifiManager setup process:
@@ -120,8 +136,11 @@
 #  define WifiManager_ssid Gateway_Name //this is the network name of the initial setup access point
 #endif
 #ifndef WifiManager_ConfigPortalTimeOut
-#  define WifiManager_ConfigPortalTimeOut 240 //time in seconds for the setup portal to stay open, default 240s
-//#  define WifiManager_ConfigPortalTimeOut 10 //time in seconds for the setup portal to stay open, default 240s
+  #if ((ESP32_WT32_ETH01_BOARD) || (ESP32_OLIMEX_GTW))
+    #  define WifiManager_ConfigPortalTimeOut 10 //time in seconds for the setup portal to stay open, default 240s
+  #else
+    #  define WifiManager_ConfigPortalTimeOut 240 //time in seconds for the setup portal to stay open, default 240s
+  #endif
 #endif
 #ifndef WiFi_TimeOut
 #  define WiFi_TimeOut 30
@@ -178,8 +197,8 @@
 //#  define MQTT_SERVER "192.168.2.100"
 //#  define MQTT_SERVER "192.168.2.101"
 //#  define MQTT_SERVER "192.168.2.102"
-//#  define MQTT_SERVER "192.168.2.103"
-#  define MQTT_SERVER "192.168.2.123"
+#  define MQTT_SERVER "192.168.2.103"
+//#  define MQTT_SERVER "192.168.2.104"
 //#  define MQTT_SERVER "192.168.2.133"
 #endif
 #ifndef MQTT_PORT
@@ -343,11 +362,11 @@ extern ss_cnt_parameters cnt_parameters_array[];
 
 //#define ZgatewayRF     "RF"       //ESP8266, Arduino, ESP32
 //#define ZgatewayIR     "IR"       //ESP8266, Arduino,         Sonoff RF Bridge
-#define ZgatewayLORA   "LORA"       //ESP8266, Arduino, ESP32
+//#define ZgatewayLORA   "LORA"       //ESP8266, Arduino, ESP32
 //#define ZgatewayPilight "Pilight" //ESP8266, Arduino, ESP32
 //#define ZgatewayWeatherStation "WeatherStation" //ESP8266, Arduino, ESP32
 //#define ZgatewayGFSunInverter "GFSunInverter"   //ESP32
-//#define ZgatewayBT     "BT"       //ESP8266, ESP32
+#define ZgatewayBT     "BT"       //ESP8266, ESP32
 //#define ZgatewayRF2    "RF2"      //ESP8266, Arduino, ESP32
 //#define ZgatewaySRFB   "SRFB"     //                          Sonoff RF Bridge
 //#define Zgateway2G     "2G"       //ESP8266, Arduino, ESP32

@@ -39,7 +39,7 @@
 //The next #define include the following boards:
 // esp32-wt32-eth01-ble-eth
 // esp32-wt32-eth01-LoRa-eth
-#define ESP32_WT32_ETH01_BOARD  (1)
+#define ESP32_WT32_ETH01_BOARD  (0)
 #define TTGO_LORA_BOARD         (0)
 //The next #define include the following boards:
 // esp32-olimex-gtw-ble-eth
@@ -197,9 +197,9 @@
 //#  define MQTT_SERVER "192.168.2.100"
 //#  define MQTT_SERVER "192.168.2.101"
 //#  define MQTT_SERVER "192.168.2.102"
-#  define MQTT_SERVER "192.168.2.103"
+//#  define MQTT_SERVER "192.168.2.103"
 //#  define MQTT_SERVER "192.168.2.104"
-//#  define MQTT_SERVER "192.168.2.133"
+#  define MQTT_SERVER "192.168.2.133"
 #endif
 #ifndef MQTT_PORT
 #  define MQTT_PORT "1883"

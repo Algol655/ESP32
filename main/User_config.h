@@ -39,13 +39,14 @@
 //The next #define include the following boards:
 // esp32-wt32-eth01-ble-eth
 // esp32-wt32-eth01-LoRa-eth
-#define ESP32_WT32_ETH01_BOARD  (0)
+#define ESP32_WT32_ETH01_BOARD  (1)
 #define TTGO_LORA_BOARD         (0)
 //The next #define include the following boards:
 // esp32-olimex-gtw-ble-eth
 // esp32-olimex-gtw-ble-poe
 // esp32-olimex-gtw-ble-poe-iso
 #define ESP32_OLIMEX_GTW        (0)
+#define ESP32_C3_SUPER_MINI     (0)
 //End Added By Me!!
 
 /*-------------CONFIGURE WIFIMANAGER-------------(only ESP8266 & SONOFF RFBridge)*/
@@ -197,9 +198,9 @@
 //#  define MQTT_SERVER "192.168.2.100"
 //#  define MQTT_SERVER "192.168.2.101"
 //#  define MQTT_SERVER "192.168.2.102"
-//#  define MQTT_SERVER "192.168.2.103"
+#  define MQTT_SERVER "192.168.2.103"
 //#  define MQTT_SERVER "192.168.2.104"
-#  define MQTT_SERVER "192.168.2.133"
+//#  define MQTT_SERVER "192.168.2.133"
 #endif
 #ifndef MQTT_PORT
 #  define MQTT_PORT "1883"
@@ -671,12 +672,22 @@ extern ss_cnt_parameters cnt_parameters_array[];
 //For example it can cause false triggers on a PIR HC-SR501
 //It is reccomended to change Wifi BAND to G and reduce tx power level to 11dBm
 //Since the WiFi protocol is persisted in the flash of the ESP you have to run at least once with `WiFiGMode` defined false to get Band N back.
-#ifndef WifiGMode
-//#    define WifiGMode                 true
-#endif
-#ifndef WifiPower
-//#    define WifiPower                 WIFI_POWER_11dBm //When using an ESP32
-//#    define WifiPower                 11 //When using an ESP8266
+#if (ESP32_C3_SUPER_MINI)   //Let's make the ESP32_C3_SUPER_MINI board always work on the G band (2.4GHz, 54Mb/s max)
+  #ifndef WifiGMode
+    #define WifiGMode                 true
+  #endif
+  #ifndef WifiPower
+    #define WifiPower                 WIFI_POWER_11dBm //When using an ESP32
+    //#define WifiPower                 11 //When using an ESP8266
+  #endif
+#else
+  #ifndef WifiGMode
+    //#define WifiGMode                 true
+  #endif
+  #ifndef WifiPower
+    //#define WifiPower                 WIFI_POWER_11dBm //When using an ESP32
+    //#define WifiPower                 11 //When using an ESP8266
+  #endif
 #endif
 
 /*-----------PLACEHOLDERS FOR WebUI DISPLAY--------------*/

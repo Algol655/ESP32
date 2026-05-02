@@ -1,0 +1,104 @@
+name: Reusable Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.13'
+      enable-dev-ota:
+        description: 'Enable development OTA builds'
+        required: false
+        type: boolean
+        default: false
+      version-tag:
+        description: 'Version tag to inject into firmware (e.g., SHA or release tag)'
+        required: false
+        type: string
+        default: 'unspecified'
+      artifact-retention-days:
+        description: 'Number of days to retain build artifacts'
+        required: false
+        type: number
+        default: 7
+      artifact-name-prefix:
+        description: 'Prefix for artifact names (e.g., "firmware-" for dev builds)'
+        required: false
+        type: string
+        default: ''
+      prepare-for-deploy:
+        description: 'Prepare firmware files for deployment with specific naming'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  load-environments:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          ENVIRONMENTS=$(jq -c '.environments.all' .github/workflows/environments.json)
+          echo "matrix=${ENVIRONMENTS}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: load-environments
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environments: ${{ fromJson(needs.load-environments.outputs.matrix) }}
+    name: Build ${{ matrix.environments }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO dependencies
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.18.zip
+
+      - name: Build firmware using ci.sh
+        run: |
+          BUILD_ARGS="${{ matrix.environments }}"
+          
+          # Add version tag if specified
+          if [ "${{ inputs.version-tag }}" != "unspecified" ]; then
+            BUILD_ARGS="$BUILD_ARGS --version ${{ inputs.version-tag }}"
+          fi
+          
+          # Add mode flag (dev/prod)
+          if [ "${{ inputs.enable-dev-ota }}" = "true" ]; then
+            BUILD_ARGS="$BUILD_ARGS --mode dev"
+          else
+            BUILD_ARGS="$BUILD_ARGS --mode prod"
+          fi
+          
+          # Add deploy flag if needed
+          if [ "${{ inputs.prepare-for-deploy }}" = "true" ]; then
+            BUILD_ARGS="$BUILD_ARGS --deploy-ready"
+          fi
+          
+          # Execute build (uses default generated/artifacts/ directory)
+          ./scripts/ci.sh build $BUILD_ARGS
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name-prefix }}${{ matrix.environments }}
+          path: generated/artifacts/
+          retention-days: ${{ inputs.artifact-retention-days }}

@@ -66,8 +66,11 @@ extern String stateBTMeasures(bool);
 #endif // Setting this to 1 prevents overwriting the publication of the device connection data with the advertised data (Recommended for use with OpenHAB).
 
 #ifndef MinimumRSSI
-//#  define MinimumRSSI -100 //default minimum rssi value, all the devices below -100 will not be reported
-#  define MinimumRSSI -90 //default minimum rssi value, all the devices below -100 will not be reported
+  #if (ESP32_C3_SUPER_MINI)
+    #  define MinimumRSSI -100 //default minimum rssi value, all the devices below -100 will not be reported
+  #else
+    #  define MinimumRSSI -90 //default minimum rssi value, all the devices below -100 will not be reported
+  #endif
 #endif
 
 #ifndef Scan_duration

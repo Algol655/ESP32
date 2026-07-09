@@ -27,6 +27,8 @@
 #  include <WebServer.h> // Docs for this are here - https://github.com/espressif/arduino-esp32/tree/master/libraries/WebServer
 #  include <WiFi.h>
 
+#  include <cstdarg>
+
 #  include "TheengsCommon.h"
 #  include "config_WebContent.h"
 #  include "config_WebUI.h"
@@ -64,20 +66,26 @@ extern void eraseConfig();
 extern unsigned long uptime();
 extern void ESPRestart(byte reason);
 extern void XtoSYS(const char* topicOri, JsonObject& SYSdata);
+extern void SYSConfig_save();
 extern String stateMeasures();
 extern void MQTTHttpsFWUpdate(const char* topicOri, JsonObject& HttpsFwUpdateData);
 extern void receivingDATA(const char* topicOri, const char* datacallback);
 
 /*------------------- Web Console Globals ----------------------*/
 
-#  define ROW_LENGTH 1024
+#  define ROW_LENGTH 512
 
-const uint16_t LOG_BUFFER_SIZE = 6096;
+const uint16_t LOG_BUFFER_SIZE = 3072;
 uint32_t log_buffer_pointer;
 void* log_buffer_mutex;
-char log_buffer[LOG_BUFFER_SIZE]; // Log buffer in HEAP
+char* log_buffer = nullptr; // Lazy-allocated on first console access
 
 const uint16_t MAX_LOGSZ = LOG_BUFFER_SIZE - 96;
+
+#  define LOG_BUFFER_IDLE_TIMEOUT 120000 // Free log buffer after 2 minutes of console inactivity
+unsigned long log_buffer_last_access = 0;
+static char* line = nullptr;
+int lineIndex = 0;
 const uint16_t TOPSZ = 151; // Max number of characters in topic string
 uint8_t masterlog_level; // Master log level used to override set log level
 bool reset_web_log_flag = false; // Reset web console log
@@ -86,6 +94,27 @@ const char* www_username = WEBUI_LOGIN;
 String authFailResponse = "Authentication Failed";
 bool webUISecure = WEBUI_AUTH;
 boolean displayMetric = DISPLAY_METRIC;
+
+static void ensureLogBuffer() {
+  if (!log_buffer) {
+    log_buffer = (char*)calloc(LOG_BUFFER_SIZE, 1);
+    log_buffer_pointer = 0;
+  }
+  log_buffer_last_access = millis();
+}
+
+static void freeLogBufferIfIdle() {
+  if (log_buffer && (millis() - log_buffer_last_access > LOG_BUFFER_IDLE_TIMEOUT)) {
+    free(log_buffer);
+    log_buffer = nullptr;
+    log_buffer_pointer = 0;
+    if (line) {
+      free(line);
+      line = nullptr;
+      lineIndex = 0;
+    }
+  }
+}
 
 /*********************************************************************************************\
  * ESP32 AutoMutex
@@ -411,6 +440,38 @@ bool exists(String path) {
 }
 #  endif
 
+/*------------------- Chunked Response Helpers ----------------------*/
+// Send HTML pages in chunks to avoid large String heap allocations.
+// Each helper puts a temporary buffer on its own stack frame, sends
+// the chunk, then the buffer is freed when the helper returns.
+
+static void beginChunkedResponse() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+}
+
+static void sendHeaderChunk(const char* title) {
+  char buffer[768];
+  snprintf(buffer, sizeof(buffer), header_html, title);
+  server.sendContent(buffer);
+}
+
+static void sendBodyChunk(const char* fmt, ...) {
+  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, fmt, args);
+  va_end(args);
+  server.sendContent(buffer);
+}
+
+static void sendFooterChunk() {
+  char buffer[256];
+  snprintf(buffer, sizeof(buffer), footer, OMG_VERSION);
+  server.sendContent(buffer);
+  server.sendContent(""); // End chunked transfer
+}
+
 /**
  * @brief / - Page
  *
@@ -432,18 +493,13 @@ void handleRoot() {
       THEENGS_LOG_WARNING(F("[WebUI] Restart" CR));
       char jsonChar[100];
       serializeJson(modules, jsonChar, measureJson(modules) + 1);
-      char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Restart").c_str());
-      String response = String(buffer);
-      response += String(restart_script);
-      response += String(script);
-      response += String(style);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Restart");
-      response += String(buffer);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-      response += String(buffer);
-      server.send(200, "text/html", response);
+      beginChunkedResponse();
+      sendHeaderChunk((String(gateway_name) + " - Restart").c_str());
+      server.sendContent(restart_script);
+      server.sendContent(script);
+      server.sendContent(style);
+      sendBodyChunk(reset_body, jsonChar, gateway_name, "Restart");
+      sendFooterChunk();
 
       delay(2000); // Wait for web page to be sent before
 
@@ -455,19 +511,13 @@ void handleRoot() {
   } else {
     char jsonChar[100];
     serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Main Menu").c_str());
-    String response = String(buffer);
-    response += String(root_script);
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, root_body, jsonChar, gateway_name);
-    response += String(buffer);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-    server.send(200, "text/html", response);
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Main Menu").c_str());
+    server.sendContent(root_script);
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(root_body, jsonChar, gateway_name);
+    sendFooterChunk();
   }
 }
 
@@ -485,18 +535,12 @@ void handleCN() {
   } else {
     char jsonChar[100];
     serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configuration").c_str());
-    String response = String(buffer);
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_body, jsonChar, gateway_name);
-    response += String(buffer);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-    server.send(200, "text/html", response);
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Configuration").c_str());
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(config_body, jsonChar, gateway_name);
+    sendFooterChunk();
   }
 }
 
@@ -533,19 +577,12 @@ void handleWU() {
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure WebUI").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
-  int logLevel = Log.getLevel();
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_webui_body, jsonChar, gateway_name, (displayMetric ? "checked" : ""), (webUISecure ? "checked" : ""));
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure WebUI").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(config_webui_body, jsonChar, gateway_name, (displayMetric ? "checked" : ""), (webUISecure ? "checked" : ""));
+  sendFooterChunk();
 }
 
 /**
@@ -627,19 +664,13 @@ void handleWI() {
 
       char jsonChar[100];
       serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-      char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure WiFi").c_str());
-      String response = String(buffer);
-      response += String(wifi_script);
-      response += String(script);
-      response += String(style);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_wifi_body, jsonChar, gateway_name, WiFiScan.c_str(), WiFi.SSID().c_str());
-      response += String(buffer);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-      response += String(buffer);
-      server.send(200, "text/html", response);
+      beginChunkedResponse();
+      sendHeaderChunk((String(gateway_name) + " - Configure WiFi").c_str());
+      server.sendContent(wifi_script);
+      server.sendContent(script);
+      server.sendContent(style);
+      sendBodyChunk(config_wifi_body, jsonChar, gateway_name, WiFiScan.c_str(), WiFi.SSID().c_str());
+      sendFooterChunk();
       return;
 
     } else if (server.hasArg("save")) {
@@ -663,18 +694,13 @@ void handleWI() {
         THEENGS_LOG_WARNING(F("[WebUI] Save WiFi and Restart" CR));
         char jsonChar[100];
         serializeJson(modules, jsonChar, measureJson(modules) + 1);
-        char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Save WiFi and Restart").c_str());
-        String response = String(buffer);
-        response += String(restart_script);
-        response += String(script);
-        response += String(style);
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Save WiFi and Restart");
-        response += String(buffer);
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-        response += String(buffer);
-        server.send(200, "text/html", response);
+        beginChunkedResponse();
+        sendHeaderChunk((String(gateway_name) + " - Save WiFi and Restart").c_str());
+        server.sendContent(restart_script);
+        server.sendContent(script);
+        server.sendContent(style);
+        sendBodyChunk(reset_body, jsonChar, gateway_name, "Save WiFi and Restart");
+        sendFooterChunk();
 
         delay(2000); // Wait for web page to be sent before
         XtoSYS((char*)topic.c_str(), WEBtoSYS);
@@ -686,19 +712,13 @@ void handleWI() {
   }
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure WiFi").c_str());
-  String response = String(buffer);
-  response += String(wifi_script);
-  response += String(script);
-  response += String(style);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_wifi_body, jsonChar, gateway_name, WiFiScan.c_str(), WiFi.SSID().c_str());
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure WiFi").c_str());
+  server.sendContent(wifi_script);
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(config_wifi_body, jsonChar, gateway_name, WiFiScan.c_str(), WiFi.SSID().c_str());
+  sendFooterChunk();
 }
 
 /**
@@ -798,18 +818,13 @@ void handleMQ() {
         WEBtoSYS["save_cnt"] = true;
         char jsonChar[100];
         serializeJson(modules, jsonChar, measureJson(modules) + 1);
-        char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Save MQTT and Reconnect").c_str());
-        String response = String(buffer);
-        response += String(restart_script);
-        response += String(script);
-        response += String(style);
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Save MQTT and Reconnect");
-        response += String(buffer);
-        snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-        response += String(buffer);
-        server.send(200, "text/html", response);
+        beginChunkedResponse();
+        sendHeaderChunk((String(gateway_name) + " - Save MQTT and Reconnect").c_str());
+        server.sendContent(restart_script);
+        server.sendContent(script);
+        server.sendContent(style);
+        sendBodyChunk(reset_body, jsonChar, gateway_name, "Save MQTT and Reconnect");
+        sendFooterChunk();
 
         delay(2000); // Wait for web page to be sent before
         String topic = String(mqtt_topic) + String(gateway_name) + String(subjectMQTTtoSYSset);
@@ -824,31 +839,25 @@ void handleMQ() {
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure MQTT").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure MQTT").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
   // mqtt server (mh), mqtt port (ml), mqtt username (mu), mqtt password (mp), secure connection (sc), server certificate (msc), mqtt topic (mt), discovery prefix (dp) (last one only #ifdef ZmqttDiscovery)
 #  if MQTT_BROKER_MODE
 #    ifdef ZmqttDiscovery
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_mqtt_body, jsonChar, gateway_name, "", "1883", "", "", gateway_name, mqtt_topic, discovery_prefix);
+  sendBodyChunk(config_mqtt_body, jsonChar, gateway_name, "", "1883", "", "", gateway_name, mqtt_topic, discovery_prefix);
 #    else
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_mqtt_body, jsonChar, gateway_name, "", "1883", "", "", gateway_name, mqtt_topic);
+  sendBodyChunk(config_mqtt_body, jsonChar, gateway_name, "", "1883", "", "", gateway_name, mqtt_topic);
 #    endif
 #  else
 #    ifdef ZmqttDiscovery
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_mqtt_body, jsonChar, gateway_name, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_server, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_port, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_user, (cnt_parameters_array[CNT_DEFAULT_INDEX].isConnectionSecure ? "checked" : ""), gateway_name, mqtt_topic, discovery_prefix);
+  sendBodyChunk(config_mqtt_body, jsonChar, gateway_name, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_server, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_port, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_user, (cnt_parameters_array[CNT_DEFAULT_INDEX].isConnectionSecure ? "checked" : ""), gateway_name, mqtt_topic, discovery_prefix);
 #    else
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_mqtt_body, jsonChar, gateway_name, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_server, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_port, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_user, (cnt_parameters_array[CNT_DEFAULT_INDEX].isConnectionSecure ? "checked" : ""), gateway_name, mqtt_topic);
+  sendBodyChunk(config_mqtt_body, jsonChar, gateway_name, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_server, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_port, cnt_parameters_array[CNT_DEFAULT_INDEX].mqtt_user, (cnt_parameters_array[CNT_DEFAULT_INDEX].isConnectionSecure ? "checked" : ""), gateway_name, mqtt_topic);
 #    endif
 #  endif
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  sendFooterChunk();
 }
 
 #  ifndef ESPWifiManualSetup
@@ -862,60 +871,80 @@ void handleMQ() {
 void handleCG() {
   WEBUI_TRACE_LOG(F("handleCG: uri: %s, args: %d, method: %d" CR), server.uri(), server.args(), server.method());
   WEBUI_SECURE
-  bool update = false;
-  StaticJsonDocument<JSON_MSG_BUFFER> jsonBuffer;
-  JsonObject WEBtoSYS = jsonBuffer.to<JsonObject>();
+  bool pwUpdate = false;
+  bool sysUpdate = false;
 
   if (server.args()) {
     for (uint8_t i = 0; i < server.args(); i++) {
       WEBUI_TRACE_LOG(F("handleCG Arg: %d, %s=%s" CR), i, server.argName(i).c_str(), server.arg(i).c_str());
     }
-    if (server.hasArg("save") && server.hasArg("gp") && strcmp(ota_pass, server.arg("gp").c_str())) {
-      strncpy(ota_pass, server.arg("gp").c_str(), parameters_size);
-      WEBtoSYS["gw_pass"] = ota_pass;
-      update = true;
+    if (server.hasArg("save")) {
+      if (server.hasArg("gp") && server.arg("gp").length() > 0 && strcmp(ota_pass, server.arg("gp").c_str())) {
+        // HTML maxlength is client-side only — a direct POST can deliver any
+        // length. Reject anything that would not fit (and leave dst
+        // NUL-terminated) before copying into the fixed-size buffer.
+        const char* gp = server.arg("gp").c_str();
+        // ota_pass is extern char[] in this TU; size is parameters_size.
+        if (strlen(gp) >= parameters_size) {
+          THEENGS_LOG_WARNING(F("[WebUI] gateway password too long, ignoring" CR));
+        } else {
+          strcpy(ota_pass, gp);
+          pwUpdate = true;
+        }
+      }
+#    ifdef ZmqttDiscovery
+      if (SYSConfig.discovery != server.hasArg("dc")) {
+        SYSConfig.discovery = server.hasArg("dc");
+        sysUpdate = true;
+      }
+#    endif
     }
   }
 
-  if (update) {
-    THEENGS_LOG_WARNING(F("[WebUI] Save Password and Restart" CR));
+  if (pwUpdate || sysUpdate) {
+    THEENGS_LOG_NOTICE(F("[WebUI] Save gateway config and restart" CR));
+
+    if (sysUpdate) {
+      SYSConfig_save();
+    }
 
     char jsonChar[100];
     serializeJson(modules, jsonChar, measureJson(modules) + 1);
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Save and Restart").c_str());
+    server.sendContent(restart_script);
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(reset_body, jsonChar, gateway_name, "Save and Restart");
+    sendFooterChunk();
 
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Save Password and Restart").c_str());
-    String response = String(buffer);
-    response += String(restart_script);
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Save Password and Restart");
-    response += String(buffer);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-    server.send(200, "text/html", response);
-
-    delay(2000); // Wait for web page to be sent before
-    String topic = String(mqtt_topic) + String(gateway_name) + String(subjectMQTTtoSYSset);
-    XtoSYS((char*)topic.c_str(), WEBtoSYS);
-  } else {
-    THEENGS_LOG_WARNING(F("[WebUI] No changes" CR));
+    if (pwUpdate) {
+      StaticJsonDocument<JSON_MSG_BUFFER> jsonBuffer;
+      JsonObject WEBtoSYS = jsonBuffer.to<JsonObject>();
+      WEBtoSYS["gw_pass"] = ota_pass;
+      delay(2000);
+      String topic = String(mqtt_topic) + String(gateway_name) + String(subjectMQTTtoSYSset);
+      XtoSYS((char*)topic.c_str(), WEBtoSYS);
+    } else {
+      delay(2000);
+      ESPRestart(5);
+    }
+    return;
   }
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure gateway").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_gateway_body, jsonChar, gateway_name, ota_pass);
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure gateway").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(config_gateway_body, jsonChar, gateway_name
+#    ifdef ZmqttDiscovery
+                ,
+                (SYSConfig.discovery ? "checked" : "")
+#    endif
+  );
+  sendFooterChunk();
 }
 #  endif
 
@@ -940,80 +969,178 @@ void handleLO() {
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure Logging").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure Logging").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
   int logLevel = Log.getLevel();
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_logging_body, jsonChar, gateway_name, (logLevel == 0 ? "selected" : ""), (logLevel == 1 ? "selected" : ""), (logLevel == 2 ? "selected" : ""), (logLevel == 3 ? "selected" : ""), (logLevel == 4 ? "selected" : ""), (logLevel == 5 ? "selected" : ""), (logLevel == 6 ? "selected" : ""));
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  sendBodyChunk(config_logging_body, jsonChar, gateway_name, (logLevel == 0 ? "selected" : ""), (logLevel == 1 ? "selected" : ""), (logLevel == 2 ? "selected" : ""), (logLevel == 3 ? "selected" : ""), (logLevel == 4 ? "selected" : ""), (logLevel == 5 ? "selected" : ""), (logLevel == 6 ? "selected" : ""));
+  sendFooterChunk();
 }
 
-#  if BLEDecryptor
+#  ifdef ZgatewayBT
+#    include "config_BT.h"
+extern void BTConfig_fromJson(JsonObject& BTdata, bool startup);
+extern String stateBTMeasures(bool start);
+extern BTConfig_s BTConfig;
+
 /**
  * @brief /BL - Config BLE
- * T: handleBL: uri: /bl, args: 3, method: 1
- * T: handleBL Arg: 0, dn=on - Force Device Name
- * T: handleBL Arg: 1, bk=on - BLE AES Key
- * T: handleBL Arg: 2, save=
  */
 void handleBL() {
   WEBUI_TRACE_LOG(F("handleBL: uri: %s, args: %d, method: %d" CR), server.uri(), server.args(), server.method());
   WEBUI_SECURE
-  StaticJsonDocument<JSON_MSG_BUFFER> jsonBuffer;
-  JsonObject WEBtoSYS = jsonBuffer.to<JsonObject>();
-
   if (server.args()) {
     for (uint8_t i = 0; i < server.args(); i++) {
       WEBUI_TRACE_LOG(F("handleBL Arg: %d, %s=%s" CR), i, server.argName(i).c_str(), server.arg(i).c_str());
     }
-    bool update = false;
-
     if (server.hasArg("save")) {
+      // Save BLE config in its own scope so the JSON buffer is freed before stateBTMeasures
+      // runs (via BTConfig_fromJson), avoiding stack overflow from nested StaticJsonDocument allocations
+      {
+        StaticJsonDocument<JSON_MSG_BUFFER> jsonBuffer;
+        JsonObject WEBtoBT = jsonBuffer.to<JsonObject>();
 
-      // Default BLE AES Key
-      if (server.hasArg("bk")) {
-        WEBtoSYS["ble_aes"] = server.arg("bk");
-        update = true;
-      }
-
-      // Split Custom BLE AES key pair string add to config 
-      if (server.hasArg("kp")) {
-        String kp = server.arg("kp");
-        while (kp.length() > 0) {
-          int kpindex = kp.indexOf(' ');
-          if (kpindex == -1) {
-            if (kp.indexOf(':') == 12) {
-              WEBtoSYS["ble_aes_keys"][kp.substring(0, 12)] = kp.substring(13, 45);
-            }
-            break;
-          } else {
-            if (kp.indexOf(':') == 12) {
-              WEBtoSYS["ble_aes_keys"][kp.substring(0, 12)] = kp.substring(13, 45);
-            }
-            kp = kp.substring(kpindex+1);
-          }
+        // Scan settings
+        WEBtoBT["enabled"] = server.hasArg("en");
+        WEBtoBT["adaptivescan"] = server.hasArg("as");
+        if (server.hasArg("bi")) {
+          WEBtoBT["interval"] = server.arg("bi").toInt();
         }
-        update = true;
-      }
+        if (server.hasArg("ai")) {
+          WEBtoBT["intervalacts"] = server.arg("ai").toInt();
+        }
+        if (server.hasArg("sd")) {
+          WEBtoBT["scanduration"] = server.arg("sd").toInt();
+        }
+        WEBtoBT["forcepscn"] = server.hasArg("fp");
+        WEBtoBT["bleconnect"] = server.hasArg("bc");
+        if (server.hasArg("mr")) {
+          WEBtoBT["minrssi"] = server.arg("mr").toInt();
+        }
 
-      if (update) {
-        THEENGS_LOG_WARNING(F("[BLE] Save Config" CR));
-        String topic = String(mqtt_topic) + String(gateway_name) + String(subjectMQTTtoSYSset);
-        XtoSYS((char*)topic.c_str(), WEBtoSYS);
-      } else {
-        THEENGS_LOG_WARNING(F("[BLE] No changes" CR));
+        // Publish settings
+        WEBtoBT["onlysensors"] = server.hasArg("os");
+        WEBtoBT["randommacs"] = server.hasArg("rm");
+        WEBtoBT["pubadvdata"] = server.hasArg("pa");
+        WEBtoBT["pubuuid4topic"] = server.hasArg("ut");
+        WEBtoBT["filterConnectable"] = server.hasArg("fc");
+        WEBtoBT["ignoreWBlist"] = server.hasArg("iw");
+
+        // Presence settings
+        WEBtoBT["hasspresence"] = server.hasArg("hp");
+        WEBtoBT["presuseuuid"] = server.hasArg("pu");
+        if (server.hasArg("pt")) {
+          WEBtoBT["prestopic"] = server.arg("pt");
+        }
+        if (server.hasArg("at")) {
+          WEBtoBT["presenceawaytimer"] = server.arg("at").toInt();
+        }
+        if (server.hasArg("mo")) {
+          WEBtoBT["movingtimer"] = server.arg("mo").toInt();
+        }
+
+        // External decoder
+        WEBtoBT["extDecoderEnable"] = server.hasArg("ed");
+        if (server.hasArg("et")) {
+          WEBtoBT["extDecoderTopic"] = server.arg("et");
+        }
+        if (server.hasArg("ci")) {
+          WEBtoBT["intervalcnct"] = server.arg("ci").toInt();
+        }
+
+        THEENGS_LOG_NOTICE(F("[WebUI] Save BLE config" CR));
+        WEBtoBT["save"] = true;
+        BTConfig_fromJson(WEBtoBT, false);
+      } // jsonBuffer freed here before stateBTMeasures internal allocations complete
+
+#    if BLEDecryptor
+      // Encryption settings (via SYS topic) - separate scope
+      {
+        StaticJsonDocument<JSON_MSG_BUFFER> sysBuffer;
+        JsonObject WEBtoSYS = sysBuffer.to<JsonObject>();
+        bool sysUpdate = false;
+
+        if (server.hasArg("bk")) {
+          WEBtoSYS["ble_aes"] = server.arg("bk");
+          sysUpdate = true;
+        }
+        if (server.hasArg("kp")) {
+          String kp = server.arg("kp");
+          while (kp.length() > 0) {
+            int kpindex = kp.indexOf(' ');
+            if (kpindex == -1) {
+              if (kp.indexOf(':') == 12) {
+                WEBtoSYS["ble_aes_keys"][kp.substring(0, 12)] = kp.substring(13, 45);
+              }
+              break;
+            } else {
+              if (kp.indexOf(':') == 12) {
+                WEBtoSYS["ble_aes_keys"][kp.substring(0, 12)] = kp.substring(13, 45);
+              }
+              kp = kp.substring(kpindex + 1);
+            }
+          }
+          sysUpdate = true;
+        }
+
+        if (sysUpdate) {
+          THEENGS_LOG_NOTICE(F("[WebUI] Save BLE encryption config" CR));
+          String topic = String(mqtt_topic) + String(gateway_name) + String(subjectMQTTtoSYSset);
+          XtoSYS((char*)topic.c_str(), WEBtoSYS);
+        }
       }
+#    endif
     }
   }
 
-  // Build BLE Key Pair string 
+  char jsonChar[100];
+  serializeJson(modules, jsonChar, measureJson(modules) + 1);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure BLE").c_str());
+  if (strlen(ble_script) > 0) {
+    server.sendContent(ble_script);
+  }
+  server.sendContent(script);
+  server.sendContent(style);
+
+  // Scan settings
+  sendBodyChunk(config_ble_body_scan,
+                jsonChar, gateway_name,
+                (BTConfig.enabled ? "checked" : ""),
+                (BTConfig.adaptiveScan ? "checked" : ""),
+                BTConfig.BLEinterval,
+                BTConfig.intervalActiveScan,
+                BTConfig.scanDuration,
+                (BTConfig.forcePassiveScan ? "checked" : ""),
+                (BTConfig.bleConnect ? "checked" : ""),
+                BTConfig.minRssi);
+
+  // Publish settings
+  sendBodyChunk(config_ble_body_publish,
+                (BTConfig.pubOnlySensors ? "checked" : ""),
+                (BTConfig.pubRandomMACs ? "checked" : ""),
+                (BTConfig.pubAdvData ? "checked" : ""),
+                (BTConfig.pubBeaconUuidForTopic ? "checked" : ""),
+                (BTConfig.filterConnectable ? "checked" : ""),
+                (BTConfig.ignoreWBlist ? "checked" : ""));
+
+  // Presence settings
+  sendBodyChunk(config_ble_body_presence,
+                (BTConfig.presenceEnable ? "checked" : ""),
+                (BTConfig.presenceUseBeaconUuid ? "checked" : ""),
+                BTConfig.presenceTopic.c_str(),
+                BTConfig.presenceAwayTimer,
+                BTConfig.movingTimer);
+
+  // External decoder settings
+  sendBodyChunk(config_ble_body_decoder,
+                (BTConfig.extDecoderEnable ? "checked" : ""),
+                BTConfig.extDecoderTopic.c_str(),
+                BTConfig.intervalConnect);
+
+#    if BLEDecryptor
+  // Encryption settings
   std::string aeskeysstring;
   JsonObject root = ble_aes_keys.as<JsonObject>();
   for (JsonPair kv : root) {
@@ -1022,24 +1149,17 @@ void handleBL() {
     aeskeysstring += kv.value().as<const char*>();
     aeskeysstring += " ";
   }
-  aeskeysstring.pop_back();
+  if (!aeskeysstring.empty()) {
+    aeskeysstring.pop_back();
+  }
 
-  char jsonChar[100];
-  serializeJson(modules, jsonChar, measureJson(modules) + 1);
+  sendBodyChunk(config_ble_body_encrypt,
+                ble_aes, aeskeysstring.c_str());
+#    endif
 
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure BLE").c_str());
-  String response = String(buffer);
-  response += String(ble_script);
-  response += String(script);
-  response += String(style);
-  int logLevel = Log.getLevel();
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_ble_body, jsonChar, gateway_name, ble_aes, aeskeysstring.c_str());
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  // Save button + footer
+  server.sendContent(config_ble_body_footer);
+  sendFooterChunk();
 }
 #  endif
 
@@ -1144,66 +1264,62 @@ void handleLA() {
   }
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure LORA").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_lora_body,
-           jsonChar,
-           gateway_name,
-           LORAConfig.frequency == 868000000 ? "selected" : "",
-           LORAConfig.frequency == 915000000 ? "selected" : "",
-           LORAConfig.frequency == 433000000 ? "selected" : "",
-           LORAConfig.txPower == 0 ? "selected" : "",
-           LORAConfig.txPower == 1 ? "selected" : "",
-           LORAConfig.txPower == 2 ? "selected" : "",
-           LORAConfig.txPower == 3 ? "selected" : "",
-           LORAConfig.txPower == 4 ? "selected" : "",
-           LORAConfig.txPower == 5 ? "selected" : "",
-           LORAConfig.txPower == 6 ? "selected" : "",
-           LORAConfig.txPower == 7 ? "selected" : "",
-           LORAConfig.txPower == 8 ? "selected" : "",
-           LORAConfig.txPower == 9 ? "selected" : "",
-           LORAConfig.txPower == 10 ? "selected" : "",
-           LORAConfig.txPower == 11 ? "selected" : "",
-           LORAConfig.txPower == 12 ? "selected" : "",
-           LORAConfig.txPower == 13 ? "selected" : "",
-           LORAConfig.txPower == 14 ? "selected" : "",
-           LORAConfig.spreadingFactor == 7 ? "selected" : "",
-           LORAConfig.spreadingFactor == 8 ? "selected" : "",
-           LORAConfig.spreadingFactor == 9 ? "selected" : "",
-           LORAConfig.spreadingFactor == 10 ? "selected" : "",
-           LORAConfig.spreadingFactor == 11 ? "selected" : "",
-           LORAConfig.spreadingFactor == 12 ? "selected" : "",
-           LORAConfig.signalBandwidth == 7800 ? "selected" : "",
-           LORAConfig.signalBandwidth == 10400 ? "selected" : "",
-           LORAConfig.signalBandwidth == 15600 ? "selected" : "",
-           LORAConfig.signalBandwidth == 20800 ? "selected" : "",
-           LORAConfig.signalBandwidth == 31250 ? "selected" : "",
-           LORAConfig.signalBandwidth == 41700 ? "selected" : "",
-           LORAConfig.signalBandwidth == 62500 ? "selected" : "",
-           LORAConfig.signalBandwidth == 125000 ? "selected" : "",
-           LORAConfig.signalBandwidth == 250000 ? "selected" : "",
-           LORAConfig.signalBandwidth == 500000 ? "selected" : "",
-           LORAConfig.codingRateDenominator == 5 ? "selected" : "",
-           LORAConfig.codingRateDenominator == 6 ? "selected" : "",
-           LORAConfig.codingRateDenominator == 7 ? "selected" : "",
-           LORAConfig.codingRateDenominator == 8 ? "selected" : "",
-           LORAConfig.preambleLength,
-           LORAConfig.syncWord,
-           LORAConfig.crc ? "checked" : "",
-           LORAConfig.invertIQ ? "checked" : "",
-           LORAConfig.onlyKnown ? "checked" : "");
-
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure LORA").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(config_lora_body,
+                jsonChar,
+                gateway_name,
+                LORAConfig.frequency == 868000000 ? "selected" : "",
+                LORAConfig.frequency == 915000000 ? "selected" : "",
+                LORAConfig.frequency == 433000000 ? "selected" : "",
+                LORAConfig.txPower == 0 ? "selected" : "",
+                LORAConfig.txPower == 1 ? "selected" : "",
+                LORAConfig.txPower == 2 ? "selected" : "",
+                LORAConfig.txPower == 3 ? "selected" : "",
+                LORAConfig.txPower == 4 ? "selected" : "",
+                LORAConfig.txPower == 5 ? "selected" : "",
+                LORAConfig.txPower == 6 ? "selected" : "",
+                LORAConfig.txPower == 7 ? "selected" : "",
+                LORAConfig.txPower == 8 ? "selected" : "",
+                LORAConfig.txPower == 9 ? "selected" : "",
+                LORAConfig.txPower == 10 ? "selected" : "",
+                LORAConfig.txPower == 11 ? "selected" : "",
+                LORAConfig.txPower == 12 ? "selected" : "",
+                LORAConfig.txPower == 13 ? "selected" : "",
+                LORAConfig.txPower == 14 ? "selected" : "",
+                LORAConfig.spreadingFactor == 7 ? "selected" : "",
+                LORAConfig.spreadingFactor == 8 ? "selected" : "",
+                LORAConfig.spreadingFactor == 9 ? "selected" : "",
+                LORAConfig.spreadingFactor == 10 ? "selected" : "",
+                LORAConfig.spreadingFactor == 11 ? "selected" : "",
+                LORAConfig.spreadingFactor == 12 ? "selected" : "",
+                LORAConfig.signalBandwidth == 7800 ? "selected" : "",
+                LORAConfig.signalBandwidth == 10400 ? "selected" : "",
+                LORAConfig.signalBandwidth == 15600 ? "selected" : "",
+                LORAConfig.signalBandwidth == 20800 ? "selected" : "",
+                LORAConfig.signalBandwidth == 31250 ? "selected" : "",
+                LORAConfig.signalBandwidth == 41700 ? "selected" : "",
+                LORAConfig.signalBandwidth == 62500 ? "selected" : "",
+                LORAConfig.signalBandwidth == 125000 ? "selected" : "",
+                LORAConfig.signalBandwidth == 250000 ? "selected" : "",
+                LORAConfig.signalBandwidth == 500000 ? "selected" : "",
+                LORAConfig.codingRateDenominator == 5 ? "selected" : "",
+                LORAConfig.codingRateDenominator == 6 ? "selected" : "",
+                LORAConfig.codingRateDenominator == 7 ? "selected" : "",
+                LORAConfig.codingRateDenominator == 8 ? "selected" : "",
+                LORAConfig.preambleLength,
+                LORAConfig.syncWord,
+                LORAConfig.crc ? "checked" : "",
+                LORAConfig.invertIQ ? "checked" : "",
+                LORAConfig.onlyKnown ? "checked" : "");
+  sendFooterChunk();
 }
 #  elif defined(ZgatewayRTL_433) || defined(ZgatewayPilight) || defined(ZgatewayRF) || defined(ZgatewayRF2) || defined(ZactuatorSomfy)
 #    include <map>
+
+#    include "rf/RFConfiguration.h"
 std::map<int, String> activeReceiverOptions = {
     {0, "Inactive"},
 #    if defined(ZgatewayPilight) && !defined(ZradioSX127x)
@@ -1220,16 +1336,7 @@ std::map<int, String> activeReceiverOptions = {
 #    endif
 };
 
-struct RFConfig_s {
-  float frequency;
-  int rssiThreshold;
-  int newOokThreshold;
-  int activeReceiver;
-};
-extern RFConfig_s RFConfig;
-
-bool validFrequency(float mhz);
-void RFConfig_fromJson(JsonObject& RFdata);
+extern RFConfiguration iRFConfig;
 
 bool isValidReceiver(int receiverId) {
   // Check if the receiverId exists in the activeReceiverOptions map
@@ -1257,8 +1364,9 @@ String generateActiveReceiverOptions(int currentSelection) {
  * T: handleRF Arg: 3, dg=0
  * T: handleRF Arg: 4, ar=0
  * T: handleRF Arg: 4, save=
- */
-
+ * TODO: need a review, it's a bit strance set the config in the iRFConfig attribute and then
+ *       setup a message and finally call the loadFromMessage
+  */
 void handleRF() {
   WEBUI_TRACE_LOG(F("handleRF: uri: %s, args: %d, method: %d" CR), server.uri(), server.args(), server.method());
   WEBUI_SECURE
@@ -1273,9 +1381,10 @@ void handleRF() {
     if (server.hasArg("save")) {
       if (server.hasArg("rf")) {
         String freqStr = server.arg("rf");
-        RFConfig.frequency = freqStr.toFloat();
-        if (validFrequency(RFConfig.frequency)) {
-          WEBtoRF["frequency"] = RFConfig.frequency;
+        float freq = freqStr.toFloat();
+        if (iRFConfig.validFrequency(freq)) {
+          iRFConfig.setFrequency(freq);
+          WEBtoRF["frequency"] = iRFConfig.getFrequency();
           update = true;
         } else {
           THEENGS_LOG_WARNING(F("[WebUI] Invalid Frequency" CR));
@@ -1284,49 +1393,43 @@ void handleRF() {
       if (server.hasArg("ar")) {
         int selectedReceiver = server.arg("ar").toInt();
         if (isValidReceiver(selectedReceiver)) { // Assuming isValidReceiver is a validation function
-          RFConfig.activeReceiver = selectedReceiver;
-          WEBtoRF["activereceiver"] = RFConfig.activeReceiver;
+          iRFConfig.setActiveReceiver(selectedReceiver);
+          WEBtoRF["activereceiver"] = iRFConfig.getActiveReceiver();
           update = true;
         } else {
           THEENGS_LOG_WARNING(F("[WebUI] Invalid Active Receiver" CR));
         }
       }
       if (server.hasArg("oo")) {
-        RFConfig.newOokThreshold = server.arg("oo").toInt();
-        WEBtoRF["ookthreshold"] = RFConfig.newOokThreshold;
+        iRFConfig.setNewOokThreshold(server.arg("oo").toInt());
+        WEBtoRF["ookthreshold"] = iRFConfig.getNewOokThreshold();
         update = true;
       }
       if (server.hasArg("rs")) {
-        RFConfig.rssiThreshold = server.arg("rs").toInt();
-        WEBtoRF["rssithreshold"] = RFConfig.rssiThreshold;
+        iRFConfig.setRssiThreshold(server.arg("rs").toInt());
+        WEBtoRF["rssithreshold"] = iRFConfig.getRssiThreshold();
         update = true;
       }
       if (update) {
         THEENGS_LOG_NOTICE(F("[WebUI] Save data" CR));
         WEBtoRF["save"] = true;
-        RFConfig_fromJson(WEBtoRF);
+        iRFConfig.loadFromMessage(WEBtoRF);
         stateRFMeasures();
         THEENGS_LOG_TRACE(F("[WebUI] RFConfig end" CR));
       }
     }
   }
 
-  String activeReceiverHtml = generateActiveReceiverOptions(RFConfig.activeReceiver);
+  String activeReceiverHtml = generateActiveReceiverOptions(iRFConfig.getActiveReceiver());
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure RF").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_rf_body, jsonChar, gateway_name, RFConfig.frequency, activeReceiverHtml.c_str());
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure RF").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(config_rf_body, jsonChar, gateway_name, iRFConfig.getFrequency(), activeReceiverHtml.c_str());
+  sendFooterChunk();
 }
 #  endif
 
@@ -1346,19 +1449,13 @@ void handleRT() {
     char jsonChar[100];
     serializeJson(modules, jsonChar, measureJson(modules) + 1);
     THEENGS_LOG_WARNING(F("[WebUI] Erase and Restart" CR));
-
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Erase and Restart").c_str());
-    String response = String(buffer);
-    response += String(restart_script);
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Erase and Restart");
-    response += String(buffer);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-    server.send(200, "text/html", response);
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Erase and Restart").c_str());
+    server.sendContent(restart_script);
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(reset_body, jsonChar, gateway_name, "Erase and Restart");
+    sendFooterChunk();
 
     eraseConfig();
   } else {
@@ -1391,13 +1488,10 @@ void handleCL() {
 
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Configure Cloud").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Configure Cloud").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
 
   char cloudEnabled[8] = {0};
   if (isCloudEnabled()) {
@@ -1411,14 +1505,11 @@ void handleCL() {
 
   requestToken = esp_random();
 #    ifdef ESP32_ETHERNET
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_cloud_body, jsonChar, gateway_name, " cloud checked", " Not", (String(CLOUDGATEWAY) + "token/start").c_str(), (char*)ETH.macAddress().c_str(), ("http://" + String(TheengsUtils::ip2CharArray(ETH.localIP())) + "/").c_str(), gateway_name, uptime(), requestToken);
+  sendBodyChunk(config_cloud_body, jsonChar, gateway_name, " cloud checked", " Not", (String(CLOUDGATEWAY) + "token/start").c_str(), (char*)ETH.macAddress().c_str(), ("http://" + String(TheengsUtils::ip2CharArray(ETH.localIP())) + "/").c_str(), gateway_name, uptime(), requestToken);
 #    else
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, config_cloud_body, jsonChar, gateway_name, cloudEnabled, deviceToken, (String(CLOUDGATEWAY) + "token/start").c_str(), (char*)WiFi.macAddress().c_str(), ("http://" + String(TheengsUtils::ip2CharArray(WiFi.localIP())) + "/").c_str(), gateway_name, uptime(), requestToken);
+  sendBodyChunk(config_cloud_body, jsonChar, gateway_name, cloudEnabled, deviceToken, (String(CLOUDGATEWAY) + "token/start").c_str(), (char*)WiFi.macAddress().c_str(), ("http://" + String(TheengsUtils::ip2CharArray(WiFi.localIP())) + "/").c_str(), gateway_name, uptime(), requestToken);
 #    endif
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  sendFooterChunk();
 }
 
 /**
@@ -1441,18 +1532,12 @@ void handleTK() {
       setCloudEnabled(true);
       char jsonChar[100];
       serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-      char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Received Device Token").c_str());
-      String response = String(buffer);
-      response += String(script);
-      response += String(style);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, token_body, jsonChar, gateway_name);
-      response += String(buffer);
-      snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-      response += String(buffer);
-      server.send(200, "text/html", response);
+      beginChunkedResponse();
+      sendHeaderChunk((String(gateway_name) + " - Received Device Token").c_str());
+      server.sendContent(script);
+      server.sendContent(style);
+      sendBodyChunk(token_body, jsonChar, gateway_name);
+      sendFooterChunk();
     } else {
       WEBUI_TRACE_LOG(F("handleTK: uptime: %u, uptime: %u, ok: %T" CR), server.arg("uptime").toInt(), uptime(), server.arg("uptime").toInt() + 600 > uptime());
       WEBUI_TRACE_LOG(F("handleTK: RT: %d, RT: %d, ok: %T " CR), server.arg("RT").toInt(), requestToken, server.arg("RT").toInt() == requestToken);
@@ -1523,23 +1608,13 @@ void handleIN() {
       THEENGS_LOG_WARNING(F("[WebUI] informationDisplay content length ( %d ) greater than WEB_TEMPLATE_BUFFER_MAX_SIZE.  Display truncated" CR), informationDisplay.length());
     }
 
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Information").c_str());
-    String response = String(buffer);
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, information_script, informationDisplay.c_str());
-    response += String(buffer);
-
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, information_body, jsonChar, gateway_name);
-    response += String(buffer);
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-
-    server.send(200, "text/html", response);
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Information").c_str());
+    sendBodyChunk(information_script, informationDisplay.c_str());
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(information_body, jsonChar, gateway_name);
+    sendFooterChunk();
   }
 }
 
@@ -1606,36 +1681,26 @@ void handleUP() {
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
 
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Firmware Upgrade").c_str());
-  String response = String(buffer);
-  response += String(script);
-  response += String(style);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Firmware Upgrade").c_str());
+  server.sendContent(script);
+  server.sendContent(style);
   String systemUrl = RELEASE_LINK + latestVersion + "/" + ENV_NAME + "-firmware.bin";
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, upgrade_body, jsonChar, gateway_name, systemUrl.c_str());
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  sendBodyChunk(upgrade_body, jsonChar, gateway_name, systemUrl.c_str());
+  sendFooterChunk();
 }
 #  endif
 
 void sendRestartPage() {
   char jsonChar[100];
   serializeJson(modules, jsonChar, measureJson(modules) + 1);
-  char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Updating Firmware and Restart").c_str());
-  String response = String(buffer);
-  response += String(restart_script);
-  response += String(script);
-  response += String(style);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, reset_body, jsonChar, gateway_name, "Updating Firmware and Restart");
-  response += String(buffer);
-  snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-  response += String(buffer);
-  server.send(200, "text/html", response);
+  beginChunkedResponse();
+  sendHeaderChunk((String(gateway_name) + " - Updating Firmware and Restart").c_str());
+  server.sendContent(restart_script);
+  server.sendContent(script);
+  server.sendContent(style);
+  sendBodyChunk(reset_body, jsonChar, gateway_name, "Updating Firmware and Restart");
+  sendFooterChunk();
 
   delay(2000); // Wait for web page to be sent before
 }
@@ -1647,6 +1712,7 @@ void sendRestartPage() {
 void handleCS() {
   WEBUI_TRACE_LOG(F("handleCS: uri: %s, args: %d, method: %d" CR), server.uri(), server.args(), server.method());
   WEBUI_SECURE
+  ensureLogBuffer();
   if (server.args() && server.hasArg("c2")) {
     for (uint8_t i = 0; i < server.args(); i++) {
       WEBUI_TRACE_LOG(F("handleCS Arg: %d, %s=%s" CR), i, server.argName(i).c_str(), server.arg(i).c_str());
@@ -1689,19 +1755,13 @@ void handleCS() {
   } else {
     char jsonChar[100];
     serializeJson(modules, jsonChar, measureJson(modules) + 1);
-
-    char buffer[WEB_TEMPLATE_BUFFER_MAX_SIZE];
-
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, header_html, (String(gateway_name) + " - Console").c_str());
-    String response = String(buffer);
-    response += String(console_script);
-    response += String(script);
-    response += String(style);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, console_body, jsonChar, gateway_name);
-    response += String(buffer);
-    snprintf(buffer, WEB_TEMPLATE_BUFFER_MAX_SIZE, footer, OMG_VERSION);
-    response += String(buffer);
-    server.send(200, "text/html", response);
+    beginChunkedResponse();
+    sendHeaderChunk((String(gateway_name) + " - Console").c_str());
+    server.sendContent(console_script);
+    server.sendContent(script);
+    server.sendContent(style);
+    sendBodyChunk(console_body, jsonChar, gateway_name);
+    sendFooterChunk();
   }
 }
 
@@ -1763,7 +1823,7 @@ void WebUISetup() {
   server.on("/wi", HTTP_POST, handleWI); // Configure Wifi
   server.on("/mq", HTTP_POST, handleMQ); // Configure MQTT
 #  ifndef ESPWifiManualSetup
-  server.on("/cg", HTTP_POST, handleCG); // Configure gateway"
+  server.on("/cg", handleCG); // Configure gateway
 #  endif
   server.on("/wu", handleWU); // Configure WebUI
 #  ifdef ZgatewayLORA
@@ -1777,8 +1837,8 @@ void WebUISetup() {
 #  endif
   server.on("/lo", handleLO); // Configure Logging
 
-#  if BLEDecryptor
-  server.on("/bl", HTTP_POST, handleBL); // Configure BLE
+#  ifdef ZgatewayBT
+  server.on("/bl", handleBL); // Configure BLE
 #  endif
 
   server.on("/rt", handleRT); // Reset configuration ( Erase and Restart )
@@ -1798,6 +1858,7 @@ unsigned long nextWebUIMessage = uptime() + DISPLAY_WEBUI_INTERVAL;
 
 void WebUILoop() {
   server.handleClient();
+  freeLogBufferIfIdle();
 
   if (uptime() >= nextWebUIMessage && uxQueueMessagesWaiting(webUIQueue)) {
     webUIQueueMessage* message = nullptr;
@@ -2639,11 +2700,17 @@ size_t SerialWeb::write(const uint8_t* buffer, size_t size) {
   return Serial.write(buffer, size);
 }
 
-char line[ROW_LENGTH];
-int lineIndex = 0;
 void addLog(const uint8_t* buffer, size_t size) {
+  if (!log_buffer) {
+    return; // Skip logging when console buffer is not allocated
+  }
+  if (!line) {
+    line = (char*)malloc(ROW_LENGTH);
+    if (!line) return;
+    lineIndex = 0;
+  }
   for (int i = 0; i < size; i++) {
-    if (char(buffer[i]) == 10 | lineIndex > ROW_LENGTH - 2) {
+    if (char(buffer[i]) == 10 | lineIndex >= ROW_LENGTH - 2) {
       if (char(buffer[i]) != 10) {
         line[lineIndex++] = char(buffer[i]);
       }

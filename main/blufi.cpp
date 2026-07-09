@@ -49,9 +49,9 @@ static NimBLEOta* pNimBLEOta;
 static NimBLECharacteristic* pCommandCharacteristic;
 static NimBLECharacteristic* pRecvFwCharacteristic;
 
-#ifndef BLUFI_MFG_ID
-#  define BLUFI_MFG_ID 0xFFFF // Default Manufacturer ID if not defined
-#endif
+#  ifndef BLUFI_MFG_ID
+#    define BLUFI_MFG_ID 0xFFFF // Default Manufacturer ID if not defined
+#  endif
 
 struct pkt_info {
   uint8_t* pkt;
@@ -201,7 +201,7 @@ void restart_connection_timer() {}
 void stop_connection_timer() {}
 #  endif
 
-void set_blufi_mfg_data () {
+void set_blufi_mfg_data() {
   if (!NimBLEDevice::isInitialized() || !NimBLEDevice::getAdvertising()->isAdvertising()) {
     THEENGS_LOG_NOTICE(F("Unable to set advertising data" CR));
     return;
@@ -321,16 +321,27 @@ static void example_event_callback(esp_blufi_cb_event_t event, esp_blufi_cb_para
       THEENGS_LOG_TRACE(F("BLUFI recv slave disconnect a ble connection" CR));
       esp_blufi_disconnect();
       break;
-    case ESP_BLUFI_EVENT_RECV_STA_SSID:
-      strncpy((char*)gl_sta_ssid, (char*)param->sta_ssid.ssid, param->sta_ssid.ssid_len);
-      gl_sta_ssid[param->sta_ssid.ssid_len] = '\0';
+    case ESP_BLUFI_EVENT_RECV_STA_SSID: {
+      // ssid_len comes from an unauthenticated BLE provisioning frame; clamp it
+      // before the strncpy and the trailing NUL so a crafted long SSID cannot
+      // write past gl_sta_ssid.
+      size_t ssid_len = param->sta_ssid.ssid_len;
+      if (ssid_len > sizeof(gl_sta_ssid) - 1)
+        ssid_len = sizeof(gl_sta_ssid) - 1;
+      memcpy(gl_sta_ssid, param->sta_ssid.ssid, ssid_len);
+      gl_sta_ssid[ssid_len] = '\0';
       THEENGS_LOG_NOTICE(F("Recv STA SSID %s" CR), gl_sta_ssid);
       break;
-    case ESP_BLUFI_EVENT_RECV_STA_PASSWD:
-      strncpy((char*)gl_sta_passwd, (char*)param->sta_passwd.passwd, param->sta_passwd.passwd_len);
-      gl_sta_passwd[param->sta_passwd.passwd_len] = '\0';
+    }
+    case ESP_BLUFI_EVENT_RECV_STA_PASSWD: {
+      size_t passwd_len = param->sta_passwd.passwd_len;
+      if (passwd_len > sizeof(gl_sta_passwd) - 1)
+        passwd_len = sizeof(gl_sta_passwd) - 1;
+      memcpy(gl_sta_passwd, param->sta_passwd.passwd, passwd_len);
+      gl_sta_passwd[passwd_len] = '\0';
       THEENGS_LOG_NOTICE(F("Recv STA PASSWORD" CR));
       break;
+    }
     case ESP_BLUFI_EVENT_GET_WIFI_LIST: {
       WiFi.scanNetworks(true);
       break;

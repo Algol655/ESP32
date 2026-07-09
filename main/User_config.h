@@ -29,7 +29,7 @@
 #define user_config_h
 /*-------------------VERSION----------------------*/
 #ifndef OMG_VERSION
-#  define OMG_VERSION "version_tag"
+#  define OMG_VERSION "edge"
 #endif
 
 //Begin Added By Me!!
@@ -155,6 +155,14 @@
 //#define MDNS_SD //uncomment if you  want to use mDNS for discovering automatically your IP server, please note that mDNS with ESP32 can cause the BLE to not work
 #define maxConnectionRetryNetwork 5 //maximum Wifi connection attempts with existing credential at start (used to bypass ESP32 issue on wifi connect)
 #define maxRetryWatchDog          11 //maximum Wifi or MQTT re-connection attempts before restarting
+
+// WifiReconnectWatchDog: restart the ESP if the network can't be recovered after maxRetryWatchDog
+// consecutive reconnection attempts in the main loop. This allows the gateway to self-heal from a
+// wedged WiFi stack (e.g. the ESP32 driver getting stuck after a long uptime). Disable it on
+// environments where an unexpected reboot is undesirable (e.g. a smart plug that would lose its relay state).
+#ifndef WifiReconnectWatchDog
+#  define WifiReconnectWatchDog true
+#endif
 
 //set minimum quality of signal so it ignores AP's under that quality
 #define MinimumWifiSignalQuality 8
@@ -731,8 +739,10 @@ void storeSignalValue(uint64_t);
 #    ifndef JSON_BLE_AES_CUSTOM_KEYS
 #      define JSON_BLE_AES_CUSTOM_KEYS 256 // 42 byte BLE Custom Key * 6 rounded up to 256.
 #    endif
+// Runtime default for ble_aes[]. Empty = no default; override at build time
+// with -DBLE_AES='"<32-hex-key>"' to ship a stock key.
 #    ifndef BLE_AES
-#      define BLE_AES "00112233445566778899001122334455"
+#      define BLE_AES ""
 #    endif
 #  endif
 #endif

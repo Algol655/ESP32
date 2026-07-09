@@ -370,8 +370,32 @@ void createOrUpdateDevice(const char* mac, uint8_t flags, int model, int mac_typ
     THEENGS_LOG_ERROR(F("Semaphore NOT taken" CR));
     return;
   }
+  // A BLE MAC is XX:XX:XX:XX:XX:XX = 17 chars; macAdr is 18 bytes including the null.
+  // Reject anything longer so untrusted MQTT input cannot overflow the heap buffer.
+  if (mac == nullptr || strlen(mac) > 17) {
+    THEENGS_LOG_WARNING(F("Invalid MAC, skipping" CR));
+    xSemaphoreGive(semaphoreCreateOrUpdateDevice);
+    return;
+  }
   BLEdevice* device = getDeviceByMac(mac);
   if (device == &NO_BT_DEVICE_FOUND) {
+    // Evict oldest non-listed device when at capacity
+    if ((int)devices.size() >= MaxBLEDevices) {
+      int oldestIdx = -1;
+      unsigned long oldestTime = ULONG_MAX;
+      for (int i = 0; i < (int)devices.size(); i++) {
+        if (!devices[i]->isWhtL && !devices[i]->isBlkL && !devices[i]->connect &&
+            devices[i]->lastUpdate < oldestTime) {
+          oldestTime = devices[i]->lastUpdate;
+          oldestIdx = i;
+        }
+      }
+      if (oldestIdx >= 0) {
+        THEENGS_LOG_TRACE(F("%.4s evict %s" CR), "BLE", devices[oldestIdx]->macAdr);
+        delete devices[oldestIdx];
+        devices.erase(devices.begin() + oldestIdx);
+      }
+    }
     THEENGS_LOG_TRACE(F("add %s" CR), mac);
     //new device
     device = new BLEdevice();
@@ -889,7 +913,7 @@ void setupBTTasksAndBLE() {
 #  if defined(USE_ESP_IDF) || defined(USE_BLUFI)
       14500,
 #  else
-      9500, /* Stack size in bytes */
+      8000, /* Stack size in bytes */
 #  endif
       NULL, /* Task input parameter */
       2, /* Priority of the task (set higher than core task) */
@@ -992,7 +1016,7 @@ void launchBTDiscovery(bool overrideDiscovery) {
         if (!BTConfig.extDecoderEnable && // Do not decode if an external decoder is configured
             p->sensorModel_id > UNKWNON_MODEL &&
             p->sensorModel_id < TheengsDecoder::BLE_ID_NUM::BLE_ID_MAX &&
-            p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::HHCCJCY01HHCC && 
+            p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::HHCCJCY01HHCC &&
             p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::BM2 &&
             p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::BM6) { // Exception on HHCCJCY01HHCC and BM2/BM6 as these ones are discoverable and connectable
           if (isTracker) {
@@ -1025,10 +1049,10 @@ void launchBTDiscovery(bool overrideDiscovery) {
                 // This should not happen if JSON_MSG_BUFFER is large enough for
                 // the Theengs json properties
                 THEENGS_LOG_ERROR(F("JSON deserialization of Theengs properties overflowed (error %s), buffer capacity: %u. Program might crash. Properties json: %s" CR),
-                          error.c_str(), jsonBuffer.capacity(), properties.c_str());
+                                  error.c_str(), jsonBuffer.capacity(), properties.c_str());
               } else {
                 THEENGS_LOG_ERROR(F("JSON deserialization of Theengs properties errored: %" CR),
-                          error.c_str());
+                                  error.c_str());
               }
             }
             for (JsonPair prop : jsonBuffer["properties"].as<JsonObject>()) {
@@ -1096,7 +1120,11 @@ void launchBTDiscovery(bool overrideDiscovery) {
                                 0, "", "", false, "",
                                 model.c_str(), brand.c_str(), model_id.c_str(), macWOdots.c_str(), false,
                                 stateClassMeasurement, nullptr, nullptr, "[\"lb\",\"kg\",\"jin\"]");
-              } else if (strcmp(prop.value()["unit"], "string") == 0 && strcmp(prop.key().c_str(), "mac") != 0) {
+              } else if ((strcmp(prop.value()["unit"], "string") == 0 || strcmp(prop.value()["unit"], "hex") == 0) && strcmp(prop.key().c_str(), "mac") != 0) {
+                // Non-numeric properties (e.g. iBeacon uuid/mfid/manufacturerdata
+                // carry unit "hex"). HA rejects a sensor that has state_class
+                // "measurement" but a non-numeric value, so emit these as plain
+                // text sensors: no state_class, no unit_of_measurement.
                 createDiscovery(HASS_TYPE_SENSOR,
                                 discovery_topic.c_str(), entity_name.c_str(), unique_id.c_str(),
                                 will_Topic, prop.value()["name"], value_template.c_str(),
@@ -1258,9 +1286,14 @@ void process_bledata(JsonObject& BLEdata) {
     if (ble_aes_keys.containsKey(macWOdots)) {
       THEENGS_LOG_TRACE(F("[BLEDecryptor] Custom AES key %s" CR), ble_aes_keys[macWOdots].as<const char*>());
       bleaeskeylength = hexToBytes(ble_aes_keys[macWOdots], bleaeskey, 16);
-    } else {
+    } else if (strlen(ble_aes) >= 32) {
       THEENGS_LOG_TRACE(F("[BLEDecryptor] Default AES key" CR));
       bleaeskeylength = hexToBytes(ble_aes, bleaeskey, 16);
+    } else {
+      // No per-MAC key configured and no default set: skip silently rather
+      // than attempting decryption with a placeholder key.
+      THEENGS_LOG_TRACE(F("[BLEDecryptor] No AES key configured for %s, skipping" CR), macWOdots.c_str());
+      return;
     }
     // Check AES Key
     if (bleaeskeylength != 16) {
@@ -1315,7 +1348,10 @@ void process_bledata(JsonObject& BLEdata) {
       THEENGS_LOG_TRACE(F("[BLEDecryptor] BTHomeV2 nonce %s" CR), NimBLEUtils::dataToHexString(nonce, noncelength).c_str());
 
     } else if (BLEdata["encr"].as<int>() == 3) {
-      nonce[16] = {0}; // Victron has a 16 byte zero padded nonce with IV bytes 6,7
+      // Victron has a 16-byte zero-padded nonce with IV bytes 0,1.
+      // (The line `nonce[16] = {0};` that lived here wrote a byte one past the
+      // end of the 16-byte `nonce` array on every Victron-encrypted advert;
+      // memset below already zeroes the whole buffer, so the typo was dead.)
       unsigned char iv[2];
       int ivlen = hexToBytes(BLEdata["ctr"].as<String>(), iv, 2);
       if (ivlen != 2) {
@@ -1670,6 +1706,10 @@ void immediateBTAction(void* pvParameters) {
         xSemaphoreGive(semaphoreCreateOrUpdateDevice);
       } else {
         THEENGS_LOG_ERROR(F("CreateOrUpdate Semaphore NOT taken" CR));
+        // Release the process lock we took above; otherwise a transient
+        // semaphore-contention failure here leaves BTProcessLock=true and
+        // wedges the BLE scanner/connect subsystem until a restart.
+        BTProcessLock = false;
       }
 
       // If we stopped the scheduled connect for this action, do the scheduled now

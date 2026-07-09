@@ -23,16 +23,16 @@ Heltec LORA V3 is not compatible with RTL_433 library as it is based on an SX126
 ## Assembly/soldering required parts
 |Module|Purpose|Compatible modules|Receiver Switching|Where to Buy|
 |-|-|-|-|-|
-|SRX882 or SRX882S (recommended)|433Mhz Receiver|RF(RCSwitch), RF2(KaKu), Pilight|Supported|[compatible parts list](https://compatible.openmqttgateway.com/index.php/parts)|
-|STX882 (recommended)|433Mhz Transmitter|RF(RCSwitch), RF2(KaKu), Pilight|Supported|[compatible parts list](https://compatible.openmqttgateway.com/index.php/parts)|
-|CC1101|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders), RF(RCSwitch), RF2(KaKu), Pilight|Supported|[compatible parts list](https://compatible.openmqttgateway.com/index.php/parts)|
-|SX1276/SX1278|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders)|Not Supported|[compatible parts list](https://compatible.openmqttgateway.com/index.php/parts)|
-|LilyGo/Heltec|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders)|Not Supported|[compatible parts list](https://compatible.openmqttgateway.com/index.php/parts)|
+|SRX882 or SRX882S (recommended)|433Mhz Receiver|RF(RCSwitch), RF2(KaKu), Pilight|Supported|-|
+|STX882 (recommended)|433Mhz Transmitter|RF(RCSwitch), RF2(KaKu), Pilight|Supported|-|
+|CC1101|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders), RF(RCSwitch), RF2(KaKu), Pilight|Supported|-|
+|SX1276/SX1278|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders)|Not Supported|-|
+|LilyGo/Heltec|433Mhz Transceiver|[RTL_433](../use/rf#supported-decoders)|Not Supported|-|
 
 ### SRX STX Pinout
 |Board| Receiver Pin| Emitter Pin|
 |-|:-:|:-:|
-|ESP8266|D2/**D3**/D1/D8|**RX**/D2|
+|ESP8266|**D2**/D1/D8|**RX**/D2|
 |ESP32|**27**/26|12|
 |RF BRIDGE|-|-|
 |RF BRIDGE [DIRECT HACK](https://github.com/xoseperez/espurna/wiki/Hardware-Itead-Sonoff-RF-Bridge---Direct-Hack)|4|5|
@@ -48,19 +48,33 @@ With SRX882S receiver connect the CS pin to 3.3V
 ### CC1101 Pinout
 |Board|Receiver Pin(GDO2)|Emitter Pin(GDO0)|SCK|VCC|MOSI|MISO|CSN|GND
 |-|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-|ESP8266|D2/**D3**/D1/D8|**RX**/D2|D5|**3V3**|D7|D6|D8|GND
+|ESP8266|**D2**/D1/D8|**RX**/D2|D5|**3V3**|D7|D6|D8|GND
 |ESP32|**D27**|D12|D18|**3V3**|D23|D19|D5|GND
 
-To use the CC1101 module, `ZradioCC1101` must be uncomment in the `User_config.h` or added to the `build_flags`.
-More information about the [CC1101 wiring](https://github.com/LSatan/SmartRC-CC1101-Driver-Lib#wiring). ( Please note that with OMG we are recommending CC1101 GDO2 to be connected to ESP32 D27 and GDO0 to be connected to D12, this is different than the LSatan diagram. This is due to the ESP32 using D2 as part of the boot process. )
+To use the CC1101 module, `ZradioCC1101` must be uncomment in the `User_config.h` or added to the `build_flags`. 
+
+More information about the [CC1101 wiring](https://github.com/LSatan/SmartRC-CC1101-Driver-Lib#wiring). 
+
+
+:::tip Please note that with OMG we are recommending CC1101 GDO2 to be connected to ESP32 D27 and GDO0 to be connected to D12, this is different than the LSatan diagram. This is due to the ESP32 using D2 as part of the boot process.
+
+If you want to use custom SPI pins for the CC1101 module, you can define the following variables in your `User_config.h` or as `build_flags` in `platformio.ini`:
+ - `RF_CC1101_SCK`: SPI clock pin (SCK)
+ - `RF_CC1101_SCK`: SPI clock pin (SCK)
+ - `RF_CC1101_MISO`: SPI MISO pin (Master In Slave Out)
+ - `RF_CC1101_MOSI`: SPI MOSI pin (Master Out Slave In)
+ - `RF_CC1101_CS`: SPI chip select pin (CSN)
+
+When **all** these variables are defined, OpenMQTTGateway will use your custom pinout for the CC1101 connection. This is useful if your board does not use the default pins or if you want to avoid conflicts with other devices.
+:::
 
 ## ESP32 Hardware setup
 ![Addon_RF](../img/OpenMQTTgateway_ESP32_Addon_RF.png)
 
 ## ESP8266 Hardware setup
-If the gateway works only when serial monitor is connected don't use D3 use D2 instead (gpio 4) and modify config_RF.h accordingly.
+The default receiver pin is D2 (gpio 4). Avoid D3 (gpio 0): it is a boot strapping pin, a receiver holding it low at reset forces the ESP8266 into flash mode and the board never starts.
 
-With SRX882 some users reported that D3 is not working use D1 instead in this case and modify config_RF.h accordingly.
+With SRX882 some users reported issues on D2, use D1 instead in this case and modify config_RF.h accordingly.
 
 ![Addon_RF](../img/OpenMQTTgateway_ESP8266_Addon_RF.png)
 
@@ -73,3 +87,5 @@ The RF processing can be achieved after the modification by either RF, RF2 or Pi
 
 ## WIFI RF GATEWAY Hardware setup
 This board doesn't require any hardware modifications.
+
+

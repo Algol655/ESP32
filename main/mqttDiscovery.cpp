@@ -451,7 +451,13 @@ void createDiscovery(const char* sensor_type,
                      const char* device_name, const char* device_manufacturer, const char* device_model, const char* device_id, bool retainCmd,
                      const char* state_class, const char* state_off, const char* state_on, const char* enum_options,
                      const char* command_template, bool diagnostic_entity) {
-  StaticJsonDocument<JSON_MSG_BUFFER> jsonBuffer;
+  // Heap-allocate the two JsonDocuments: createDiscovery sits at the bottom of
+  // a deep call chain (loop → launchBTDiscovery → <device>Discovery →
+  // createDiscoveryFromList(9-col, VLA) → createDiscoveryFromList(13-col) →
+  // here). Keeping 2×1024 B on the stack burned loopTask's stack headroom
+  // down to ~100 B free under full perf load. Heap-backed docs drop that
+  // 2 KB off the peak.
+  DynamicJsonDocument jsonBuffer(JSON_MSG_BUFFER);
   JsonObject sensor = jsonBuffer.to<JsonObject>();
 
   // If a component cannot render it's state (f.i. KAKU relays) no state topic
@@ -498,7 +504,10 @@ void createDiscovery(const char* sensor_type,
     }
   }
 
-  if (unit_of_meas && unit_of_meas[0]) {
+  // HA rejects a discovery payload that carries `options` (enum sensor) together
+  // with `unit_of_measurement` or `state_class` - they are mutually exclusive.
+  // Skip unit_of_measurement (and state_class below) when this is an enum sensor.
+  if (enum_options == nullptr && unit_of_meas && unit_of_meas[0]) {
     // We check if the class belongs to HAAS units list
     int num_units = sizeof(availableHASSUnits) / sizeof(availableHASSUnits[0]);
     for (int i = 0; i < num_units; i++) { // see units list and size into config_mqttDiscovery.h
@@ -572,8 +581,8 @@ void createDiscovery(const char* sensor_type,
     sensor["pl_avail"] = payload_available; // payload_on
   if (payload_not_available[0])
     sensor["pl_not_avail"] = payload_not_available; //payload_off
-  if (state_class && state_class[0])
-    sensor["stat_cla"] = state_class; //add the state class on the sensors ( https://developers.home-assistant.io/docs/core/entity/sensor/#available-state-classes )
+  if (enum_options == nullptr && state_class && state_class[0])
+    sensor["stat_cla"] = state_class; //add the state class on the sensors ( https://developers.home-assistant.io/docs/core/entity/sensor/#available-state-classes ) - omitted for enum sensors (mutually exclusive with `options`)
   if (state_on != nullptr)
     if (strcmp(state_on, "true") == 0) {
       sensor["stat_on"] = true;
@@ -600,7 +609,7 @@ void createDiscovery(const char* sensor_type,
     }
   }
 
-  if (diagnostic_entity) {  // entity_category
+  if (diagnostic_entity) { // entity_category
     sensor["ent_cat"] = "diagnostic";
   }
 
@@ -608,7 +617,7 @@ void createDiscovery(const char* sensor_type,
     sensor["ops"] = enum_options; // options
   }
 
-  StaticJsonDocument<JSON_MSG_BUFFER> jsonDeviceBuffer;
+  DynamicJsonDocument jsonDeviceBuffer(JSON_MSG_BUFFER);
   JsonObject device = jsonDeviceBuffer.to<JsonObject>();
   JsonArray identifiers = device.createNestedArray("ids");
 
